@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import { Directory, File, Paths } from 'expo-file-system';
 import { SQLiteDatabase } from 'expo-sqlite';
 import uuid from 'react-native-uuid';
 import { Document, SyncQueueItem } from '../../types';
@@ -6,23 +6,17 @@ import { DocumentRepository } from './DocumentRepository';
 import { SyncQueueRepository } from '../sync/SyncQueueRepository';
 import { withTransaction } from '../../database/transaction';
 
-const DOCS_DIR = `${FileSystem.documentDirectory}foliosync/documents/`;
-
-async function ensureDocsDir(): Promise<void> {
-  const info = await FileSystem.getInfoAsync(DOCS_DIR);
-  if (!info.exists) {
-    await FileSystem.makeDirectoryAsync(DOCS_DIR, { intermediates: true });
-  }
+function getDocsDir(): Directory {
+  const dir = new Directory(Paths.document, 'foliosync', 'documents');
+  if (!dir.exists) dir.create();
+  return dir;
 }
 
 /**
- * Computes a deterministic import ID from file metadata.
- * Prevents duplicate imports of the same file.
+ * Deterministic import ID from file metadata — prevents duplicate imports.
  */
 function computeImportId(name: string, size: number, lastModified: number): string {
-  // Simple deterministic hash: combine fields into a namespaced UUID v5-like string.
-  // We use uuid.v5 with a fixed namespace UUID.
-  const NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'; // DNS namespace
+  const NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
   return uuid.v5(`${name}:${size}:${lastModified}`, NAMESPACE) as string;
 }
 
@@ -51,14 +45,17 @@ export class DocumentService {
     const existing = await this.docRepo.findById(importId);
     if (existing) return existing;
 
-    await ensureDocsDir();
-
+    const docsDir = getDocsDir();
     const safeFilename = `${importId}_${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    const localUri = `${DOCS_DIR}${safeFilename}`;
+    const destFile = new File(docsDir, safeFilename);
 
-    await FileSystem.copyAsync({ from: sourceUri, to: localUri });
+    // Copy source file to local storage
+    const sourceFile = new File(sourceUri);
+    sourceFile.copy(destFile);
 
+    const localUri = destFile.uri;
     const now = Date.now();
+
     const doc: Document = {
       id: importId,
       serverId: null,
@@ -79,14 +76,7 @@ export class DocumentService {
       id: uuid.v4() as string,
       entityType: 'document',
       operation: 'document:create',
-      payload: JSON.stringify({
-        clientId: doc.id,
-        folderId,
-        name,
-        mimeType,
-        fileSize,
-        localUri,
-      }),
+      payload: JSON.stringify({ clientId: doc.id, folderId, name, mimeType, fileSize, localUri }),
       clientEntityId: doc.id,
       status: 'pending',
       retryCount: 0,

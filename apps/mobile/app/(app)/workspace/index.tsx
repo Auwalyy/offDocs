@@ -61,6 +61,13 @@ export default function WorkspaceScreen() {
           >
             <Text variant="caption" className="text-primary-600">Sync</Text>
           </Pressable>
+          <Pressable
+            onPress={() => router.push('/(app)/settings')}
+            accessibilityLabel="Settings"
+            className="p-2"
+          >
+            <Text variant="caption" className="text-primary-600">⚙</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -68,7 +75,7 @@ export default function WorkspaceScreen() {
         data={folders}
         keyExtractor={(f) => f.id}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-        contentContainerClassName="px-4 py-3 gap-2"
+        contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12, gap: 8 }}
         ListEmptyComponent={
           !loading ? (
             <View className="items-center py-16">

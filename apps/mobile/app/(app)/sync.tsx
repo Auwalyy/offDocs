@@ -55,7 +55,7 @@ export default function SyncScreen() {
         data={items}
         keyExtractor={(i) => i.id}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-        contentContainerClassName="px-4 pb-8 gap-2"
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32, gap: 8 }}
         ListEmptyComponent={
           !loading ? (
             <View className="items-center py-16">

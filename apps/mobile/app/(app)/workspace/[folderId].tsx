@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  Alert, FlatList, Pressable, RefreshControl, SectionList, View,
-} from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import { Text, SyncBadge } from '../../../src/design-system';
@@ -12,20 +10,25 @@ import { FolderRow } from '../../../src/components/FolderRow';
 import { DocumentRow } from '../../../src/components/DocumentRow';
 import { CreateFolderModal } from '../../../src/components/CreateFolderModal';
 import { RenameFolderModal } from '../../../src/components/RenameFolderModal';
+import { MoveFolderModal } from '../../../src/components/MoveFolderModal';
 
-const SUPPORTED_MIME = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+const SUPPORTED_MIME = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
 
 export default function FolderScreen() {
   const { folderId } = useLocalSearchParams<{ folderId: string }>();
   const router = useRouter();
   const { isOnline, isSyncing, failedSyncCount } = useApp();
 
-  const [folder, setFolder]       = useState<Folder | null>(null);
+  const [folder, setFolder]         = useState<Folder | null>(null);
   const [subFolders, setSubFolders] = useState<Folder[]>([]);
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [showCreate, setShowCreate]   = useState(false);
-  const [showRename, setShowRename]   = useState(false);
+  const [documents, setDocuments]   = useState<Document[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showRename, setShowRename] = useState(false);
+  const [showMove, setShowMove]     = useState(false);
 
   const load = useCallback(async () => {
     if (!folderId) return;
@@ -105,50 +108,50 @@ export default function FolderScreen() {
           <Pressable onPress={() => setShowRename(true)} accessibilityLabel="Rename folder" className="p-2">
             <Text variant="caption" className="text-primary-600">Rename</Text>
           </Pressable>
+          <Pressable onPress={() => setShowMove(true)} accessibilityLabel="Move folder" className="p-2">
+            <Text variant="caption" className="text-primary-600">Move</Text>
+          </Pressable>
         </View>
       </View>
 
-      <SectionList
-        sections={[
-          { title: 'Folders', data: subFolders },
-          { title: 'Documents', data: documents },
-        ]}
-        keyExtractor={(item) => item.id}
+      <ScrollView
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-        contentContainerClassName="px-4 py-3 gap-2"
-        renderSectionHeader={({ section }) =>
-          section.data.length > 0 ? (
-            <Text variant="label" className="mt-3 mb-1 text-surface-400">{section.title}</Text>
-          ) : null
-        }
-        renderItem={({ item, section }) => {
-          if (section.title === 'Folders') {
-            const f = item as Folder;
-            return (
+        contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12, gap: 8 }}
+      >
+        {subFolders.length > 0 && (
+          <>
+            <Text variant="label" className="mt-3 mb-1 text-surface-400">Folders</Text>
+            {subFolders.map((f) => (
               <FolderRow
+                key={f.id}
                 folder={f}
                 onPress={() => router.push(`/(app)/workspace/${f.id}`)}
                 onDelete={() => handleDeleteFolder(f.id)}
               />
-            );
-          }
-          const d = item as Document;
-          return (
-            <DocumentRow
-              document={d}
-              onPress={() => router.push(`/(app)/document/${d.id}`)}
-              onDelete={() => handleDeleteDocument(d.id)}
-            />
-          );
-        }}
-        ListEmptyComponent={
-          !loading ? (
-            <View className="items-center py-16">
-              <Text variant="caption" className="text-surface-400">This folder is empty</Text>
-            </View>
-          ) : null
-        }
-      />
+            ))}
+          </>
+        )}
+
+        {documents.length > 0 && (
+          <>
+            <Text variant="label" className="mt-3 mb-1 text-surface-400">Documents</Text>
+            {documents.map((d) => (
+              <DocumentRow
+                key={d.id}
+                document={d}
+                onPress={() => router.push(`/(app)/document/${d.id}`)}
+                onDelete={() => handleDeleteDocument(d.id)}
+              />
+            ))}
+          </>
+        )}
+
+        {!loading && subFolders.length === 0 && documents.length === 0 && (
+          <View className="items-center py-16">
+            <Text variant="caption" className="text-surface-400">This folder is empty</Text>
+          </View>
+        )}
+      </ScrollView>
 
       {/* FAB row */}
       <View className="absolute bottom-8 right-6 gap-3">
@@ -178,6 +181,17 @@ export default function FolderScreen() {
           await workspace.createFolder(name, folderId!);
           await load();
           setShowCreate(false);
+        }}
+      />
+      <MoveFolderModal
+        visible={showMove}
+        movingFolderId={folderId!}
+        onClose={() => setShowMove(false)}
+        onMove={async (newParentId) => {
+          const { workspace } = getServices();
+          await workspace.moveFolder(folderId!, newParentId);
+          setShowMove(false);
+          router.back();
         }}
       />
       {folder && (
