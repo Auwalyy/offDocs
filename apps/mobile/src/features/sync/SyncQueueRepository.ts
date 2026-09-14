@@ -1,5 +1,5 @@
 import { SQLiteDatabase } from 'expo-sqlite';
-import { SyncQueueItem, SyncStatus } from '../types';
+import { SyncQueueItem, SyncStatus } from '../../types';
 
 interface QueueRow {
   id: string;

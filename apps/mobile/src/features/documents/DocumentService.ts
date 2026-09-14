@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system';
 import { SQLiteDatabase } from 'expo-sqlite';
 import uuid from 'react-native-uuid';
-import { Document, SyncQueueItem } from '../types';
+import { Document, SyncQueueItem } from '../../types';
 import { DocumentRepository } from './DocumentRepository';
 import { SyncQueueRepository } from '../sync/SyncQueueRepository';
 import { withTransaction } from '../../database/transaction';

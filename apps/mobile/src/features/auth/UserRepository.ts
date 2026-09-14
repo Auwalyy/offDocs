@@ -1,5 +1,5 @@
 import { SQLiteDatabase } from 'expo-sqlite';
-import { User } from '../types';
+import { User } from '../../types';
 
 interface UserRow {
   id: string;

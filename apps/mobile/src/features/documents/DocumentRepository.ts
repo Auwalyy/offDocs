@@ -1,5 +1,5 @@
 import { SQLiteDatabase } from 'expo-sqlite';
-import { Document, SyncStatus } from '../types';
+import { Document, SyncStatus } from '../../types';
 
 interface DocumentRow {
   id: string;

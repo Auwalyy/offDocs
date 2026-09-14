@@ -1,6 +1,6 @@
 import { SQLiteDatabase } from 'expo-sqlite';
 import uuid from 'react-native-uuid';
-import { Folder, SyncQueueItem } from '../types';
+import { Folder, SyncQueueItem } from '../../types';
 import { FolderRepository } from './FolderRepository';
 import { SyncQueueRepository } from '../sync/SyncQueueRepository';
 import { withTransaction } from '../../database/transaction';

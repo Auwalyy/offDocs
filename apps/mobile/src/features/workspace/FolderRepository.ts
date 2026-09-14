@@ -1,5 +1,5 @@
 import { SQLiteDatabase } from 'expo-sqlite';
-import { Folder, SyncStatus } from '../types';
+import { Folder, SyncStatus } from '../../types';
 
 interface FolderRow {
   id: string;

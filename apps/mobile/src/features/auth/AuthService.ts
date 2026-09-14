@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import { SQLiteDatabase } from 'expo-sqlite';
-import { User } from '../types';
+import { User } from '../../types';
 import { UserRepository } from './UserRepository';
 
 const SECURE_KEY_ACCESS  = 'foliosync_access_token';
