@@ -1,4 +1,4 @@
-import { File, UploadType } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { SQLiteDatabase } from 'expo-sqlite';
 import { SyncQueueItem } from '../types';
 import { SyncQueueRepository } from '../features/sync/SyncQueueRepository';
@@ -66,7 +66,6 @@ export class SyncEngine {
     }
   }
 
-  // Exposed for testing
   orderByDependency(items: SyncQueueItem[]): SyncQueueItem[] {
     const result: SyncQueueItem[] = [];
     const deferred: SyncQueueItem[] = [];
@@ -168,21 +167,24 @@ export class SyncEngine {
     const clientId = payload['clientId'] as string;
     const token    = await this.getAccessToken();
 
-    const file = new File(localUri);
-    const result = await file.upload(`${BASE_URL}/documents`, {
-      httpMethod: 'POST',
-      uploadType: UploadType.MULTIPART,
-      fieldName: 'file',
-      mimeType,
-      parameters: { clientId, folderId: folderServerId, name, mimeType },
-      headers: {
-        'Idempotency-Key': item.id,
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
+    const result = await FileSystem.uploadAsync(
+      `${BASE_URL}/documents`,
+      localUri,
+      {
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        fieldName: 'file',
+        mimeType,
+        parameters: { clientId, folderId: folderServerId, name, mimeType },
+        headers: {
+          'Idempotency-Key': item.id,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      }
+    );
 
     if (result.status >= 400) {
-      throw new Error(`Upload failed: ${result.status}`);
+      throw new Error(`Upload failed: ${result.status} ${result.body}`);
     }
 
     const body = JSON.parse(result.body) as { data: { clientId: string; serverId: string } };

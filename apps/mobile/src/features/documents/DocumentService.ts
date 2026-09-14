@@ -1,4 +1,4 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { SQLiteDatabase } from 'expo-sqlite';
 import uuid from 'react-native-uuid';
 import { Document, SyncQueueItem } from '../../types';
@@ -6,15 +6,29 @@ import { DocumentRepository } from './DocumentRepository';
 import { SyncQueueRepository } from '../sync/SyncQueueRepository';
 import { withTransaction } from '../../database/transaction';
 
-function getDocsDir(): Directory {
-  const dir = new Directory(Paths.document, 'foliosync', 'documents');
-  if (!dir.exists) dir.create();
+async function getDocsDir(): Promise<string> {
+  const dir = `${FileSystem.documentDirectory}foliosync/documents/`;
+  const info = await FileSystem.getInfoAsync(dir);
+  if (!info.exists) {
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  }
   return dir;
 }
 
 /**
- * Deterministic import ID from file metadata — prevents duplicate imports.
+ * Copies a file from any URI scheme (file://, content://, cache://) to a
+ * permanent app-owned location using base64 read/write — the only method
+ * that works reliably across all URI types in Expo Go on Android.
  */
+async function copyToAppStorage(sourceUri: string, destUri: string): Promise<void> {
+  const base64 = await FileSystem.readAsStringAsync(sourceUri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  await FileSystem.writeAsStringAsync(destUri, base64, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+}
+
 function computeImportId(name: string, size: number, lastModified: number): string {
   const NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
   return uuid.v5(`${name}:${size}:${lastModified}`, NAMESPACE) as string;
@@ -45,15 +59,12 @@ export class DocumentService {
     const existing = await this.docRepo.findById(importId);
     if (existing) return existing;
 
-    const docsDir = getDocsDir();
+    const docsDir = await getDocsDir();
     const safeFilename = `${importId}_${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    const destFile = new File(docsDir, safeFilename);
+    const destUri = `${docsDir}${safeFilename}`;
 
-    // Copy source file to local storage
-    const sourceFile = new File(sourceUri);
-    sourceFile.copy(destFile);
+    await copyToAppStorage(sourceUri, destUri);
 
-    const localUri = destFile.uri;
     const now = Date.now();
 
     const doc: Document = {
@@ -62,7 +73,7 @@ export class DocumentService {
       folderId,
       name,
       mimeType,
-      localUri,
+      localUri: destUri,
       storageKey: null,
       fileSize,
       contentHash: null,
@@ -76,7 +87,7 @@ export class DocumentService {
       id: uuid.v4() as string,
       entityType: 'document',
       operation: 'document:create',
-      payload: JSON.stringify({ clientId: doc.id, folderId, name, mimeType, fileSize, localUri }),
+      payload: JSON.stringify({ clientId: doc.id, folderId, name, mimeType, fileSize, localUri: destUri }),
       clientEntityId: doc.id,
       status: 'pending',
       retryCount: 0,
@@ -95,6 +106,8 @@ export class DocumentService {
 
   async deleteDocument(id: string): Promise<void> {
     const now = Date.now();
+    const doc = await this.docRepo.findById(id);
+
     const queueItem: SyncQueueItem = {
       id: uuid.v4() as string,
       entityType: 'document',
@@ -112,6 +125,10 @@ export class DocumentService {
       await this.docRepo.softDelete(id, now);
       await this.queueRepo.insert(queueItem);
     });
+
+    if (doc?.localUri) {
+      await FileSystem.deleteAsync(doc.localUri, { idempotent: true });
+    }
   }
 
   async getDocuments(folderId: string): Promise<Document[]> {

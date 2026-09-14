@@ -15,16 +15,25 @@ interface AppContextValue {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
-export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser]               = useState<User | null>(null);
-  const [isOnline, setIsOnline]       = useState(connectivityMonitor.isOnline);
-  const [isSyncing, setIsSyncing]     = useState(false);
+interface AppProviderProps {
+  children: React.ReactNode;
+  initialUser: User | null;
+}
+
+export function AppProvider({ children, initialUser }: AppProviderProps) {
+  const [user, setUser]                       = useState<User | null>(initialUser);
+  const [isOnline, setIsOnline]               = useState(connectivityMonitor.isOnline);
+  const [isSyncing, setIsSyncing]             = useState(false);
   const [failedSyncCount, setFailedSyncCount] = useState(0);
 
   const refreshFailedCount = useCallback(async () => {
-    const { syncQueue } = getServices();
-    const count = await syncQueue.getFailedCount();
-    setFailedSyncCount(count);
+    try {
+      const { syncQueue } = getServices();
+      const count = await syncQueue.getFailedCount();
+      setFailedSyncCount(count);
+    } catch {
+      // services not yet ready — ignore
+    }
   }, []);
 
   const triggerSync = useCallback(async () => {
@@ -34,6 +43,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const { syncEngine } = getServices();
       await syncEngine.sync();
       await refreshFailedCount();
+    } catch {
+      // network or service error — silently handled by sync engine
     } finally {
       setIsSyncing(false);
     }
@@ -48,9 +59,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [triggerSync]);
 
   const signIn = useCallback((u: User) => setUser(u), []);
+
   const signOut = useCallback(async () => {
-    const { auth } = getServices();
-    await auth.clearSession();
+    try {
+      const { auth } = getServices();
+      await auth.clearSession();
+    } catch {
+      // ignore
+    }
     setUser(null);
   }, []);
 

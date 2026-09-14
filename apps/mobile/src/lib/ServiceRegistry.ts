@@ -15,12 +15,18 @@ export interface Services {
 }
 
 let _services: Services | null = null;
+let _db: SQLiteDatabase | null = null;
 
 export function initServices(db: SQLiteDatabase): Services {
-  const auth      = new AuthService(db);
-  const workspace = new WorkspaceService(db);
-  const documents = new DocumentService(db);
-  const syncQueue = new SyncQueueRepository(db);
+  _db = db;
+  return _build(db);
+}
+
+function _build(db: SQLiteDatabase): Services {
+  const auth       = new AuthService(db);
+  const workspace  = new WorkspaceService(db);
+  const documents  = new DocumentService(db);
+  const syncQueue  = new SyncQueueRepository(db);
   const syncEngine = new SyncEngine(db);
 
   apiClient.setAuthService(auth);
@@ -30,6 +36,11 @@ export function initServices(db: SQLiteDatabase): Services {
 }
 
 export function getServices(): Services {
-  if (!_services) throw new Error('Services not initialized');
+  // Fast Refresh can wipe module-level state while the React tree stays alive.
+  // Re-build from the stored db reference rather than throwing.
+  if (!_services) {
+    if (!_db) throw new Error('Services not initialized — call initServices first');
+    return _build(_db);
+  }
   return _services;
 }
