@@ -14,7 +14,7 @@ npm run dev
 ```
 
 - `MONGODB_URI` and the `JWT_*` secrets are required.
-- Document uploads need real Cloudflare R2 / S3 credentials in the `STORAGE_*` variables. Until then, folders still sync, but every upload fails with `STORAGE_NOT_CONFIGURED`.
+- For production, put real Cloudflare R2 / S3 credentials in the `STORAGE_*` variables. While they are placeholders, uploaded files are saved in `apps/backend/uploads/` so sync still works during development.
 
 ### Mobile
 
@@ -39,7 +39,6 @@ Open **Sync Activity** (tap the sync badge). Each failed change shows the server
 | Message | Fix |
 | --- | --- |
 | Cannot reach the server at … | Backend not running, wrong IP in `.env.local`, phone on a different network, or a firewall blocking port 3000. |
-| File storage is not configured on the server | Set the `STORAGE_*` variables in `apps/backend/.env` and restart the backend. |
 | Waiting for … to sync first | This change depends on a folder that hasn't synced yet. It goes through on its own once that folder syncs. |
 
 After fixing the cause, tap **Retry failed**.

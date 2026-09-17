@@ -61,7 +61,10 @@ export default function FolderScreen() {
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [...SUPPORTED_MIME_TYPES],
-        copyToCacheDirectory: true,
+        // On Android the picker's cache copy lives outside the app's file-system
+        // sandbox (unreadable in Expo Go). A content:// URI is always readable,
+        // so copy straight from it instead.
+        copyToCacheDirectory: Platform.OS !== 'android',
         multiple: true,
       });
       if (result.canceled || !result.assets?.length) return;

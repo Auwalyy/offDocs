@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { connectDatabase } from './config/database';
-import { isStorageConfigured } from './config/storage';
+import { usesLocalStorage, LOCAL_UPLOAD_DIR } from './config/storage';
 import { router } from './routes';
 import { logger } from './utils/logger';
 import { config } from './config';
@@ -44,8 +44,8 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 async function start() {
   await connectDatabase();
-  if (!isStorageConfigured) {
-    logger.warn('Object storage is not configured (STORAGE_* env vars are placeholders). Document uploads will be rejected.');
+  if (usesLocalStorage) {
+    logger.warn(`Object storage is not configured (STORAGE_* env vars are placeholders). Storing uploads on local disk in ${LOCAL_UPLOAD_DIR} (development only).`);
   }
   const port = parseInt(config.PORT, 10);
   // Bind to all interfaces so phones/emulators on the LAN can reach the API.

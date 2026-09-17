@@ -2,7 +2,7 @@
  * Tests for behaviours the mobile sync engine relies on:
  * - idempotency only replays successful responses and is scoped per user
  * - malformed ids are rejected with 400 instead of crashing with 500
- * - uploads fail fast with a clear error when storage is not configured
+ * - uploads fall back to local disk when object storage is not configured
  * - refresh tokens are resolved by user id
  */
 
@@ -103,11 +103,23 @@ describe('id validation', () => {
   });
 });
 
-describe('document upload', () => {
-  test('returns 503 STORAGE_NOT_CONFIGURED when storage env vars are placeholders', async () => {
+describe('local storage fallback', () => {
+  const storage = require('../src/config/storage') as typeof import('../src/config/storage');
+
+  test('is used when storage env vars are placeholders', () => {
+    expect(storage.usesLocalStorage).toBe(true);
+  });
+
+  test('keeps files inside the uploads directory', () => {
+    const key = storage.buildStorageKey(USER_ID, CLIENT_ID, 'Notes.pdf');
+    expect(storage.localPathForKey(key).startsWith(storage.LOCAL_UPLOAD_DIR)).toBe(true);
+    expect(() => storage.localPathForKey('../../etc/passwd')).toThrow('Invalid storage key.');
+  });
+
+  test('upload without a file returns 400, not a storage error', async () => {
     const res = await request(app).post('/api/v1/documents').set(auth);
-    expect(res.status).toBe(503);
-    expect(res.body.error.code).toBe('STORAGE_NOT_CONFIGURED');
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('NO_FILE');
   });
 });
 

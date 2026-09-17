@@ -4,7 +4,6 @@ import { authenticate } from '../middleware/authenticate';
 import { validate } from '../middleware/validate';
 import { idempotency } from '../middleware/idempotency';
 import { upload } from '../middleware/upload';
-import { isStorageConfigured } from '../config/storage';
 import {
   registerSchema, loginSchema, refreshSchema,
   createFolderSchema, updateFolderSchema,
@@ -42,23 +41,9 @@ router.patch( '/folders/:serverId', authenticate, idempotency, validate(updateFo
 router.delete('/folders/:serverId', authenticate, idempotency, folders.deleteFolder);
 
 // ─── Documents ────────────────────────────────────────────────────────────────
-router.post(
-  '/documents',
-  authenticate,
-  (_req, res, next) => {
-    if (isStorageConfigured) return next();
-    res.status(503).json({
-      error: {
-        code: 'STORAGE_NOT_CONFIGURED',
-        message: 'File storage is not configured on the server. Set the STORAGE_* variables in the backend .env.',
-      },
-    });
-  },
-  idempotency,
-  upload.single('file'),
-  docs.createDocument,
-);
+router.post(  '/documents',                    authenticate, idempotency, upload.single('file'), docs.createDocument);
 router.get(   '/documents/:serverId/download', authenticate, docs.getDocumentDownloadUrl);
+router.get(   '/documents/:serverId/file',     authenticate, docs.getDocumentFile);
 router.delete('/documents/:serverId',          authenticate, idempotency, docs.deleteDocument);
 
 // ─── Sync batch ───────────────────────────────────────────────────────────────

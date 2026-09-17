@@ -2,7 +2,7 @@ import { Types } from 'mongoose';
 import { Doc, IDocument } from '../models/Document';
 import { Folder } from '../models/Folder';
 import { FolderService } from './FolderService';
-import { uploadFile, deleteFile, buildStorageKey, getPresignedDownloadUrl } from '../config/storage';
+import { uploadFile, deleteFile, buildStorageKey, getPresignedDownloadUrl, usesLocalStorage } from '../config/storage';
 import { logger } from '../utils/logger';
 
 export class DocumentService {
@@ -71,9 +71,14 @@ export class DocumentService {
     return Doc.findOne({ _id: serverId, ownerId, deletedAt: null });
   }
 
+  /**
+   * With object storage this is a presigned URL. With local storage it is an
+   * API path (relative to /api/v1) that must be fetched with the auth header.
+   */
   async getDownloadUrl(serverId: string, ownerId: string): Promise<string> {
     const doc = await Doc.findOne({ _id: serverId, ownerId, deletedAt: null });
     if (!doc) throw Object.assign(new Error('Document not found.'), { code: 'DOCUMENT_NOT_FOUND' });
+    if (usesLocalStorage) return `/documents/${serverId}/file`;
     return getPresignedDownloadUrl(doc.storageKey);
   }
 

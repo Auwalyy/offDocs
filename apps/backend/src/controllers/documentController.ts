@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { DocumentService } from '../services/DocumentService';
 import { AuthRequest } from '../middleware/authenticate';
 import { createDocumentSchema } from '../validators';
+import { localPathForKey, usesLocalStorage } from '../config/storage';
 
 const documentService = new DocumentService();
 
@@ -55,6 +56,23 @@ export async function deleteDocument(req: Request, res: Response): Promise<void>
   const { serverId } = req.params as { serverId: string };
   await documentService.softDelete(serverId, userId);
   res.status(204).send();
+}
+
+/** Streams a document stored on local disk (development storage mode only). */
+export async function getDocumentFile(req: Request, res: Response): Promise<void> {
+  const userId = (req as AuthRequest).userId;
+  const { serverId } = req.params as { serverId: string };
+  const doc = await documentService.findById(serverId, userId);
+  if (!doc || !usesLocalStorage) {
+    res.status(404).json({ error: { code: 'DOCUMENT_NOT_FOUND', message: 'Document not found.' } });
+    return;
+  }
+  res.type(doc.mimeType);
+  res.sendFile(localPathForKey(doc.storageKey), (err) => {
+    if (err && !res.headersSent) {
+      res.status(404).json({ error: { code: 'FILE_MISSING', message: 'Stored file is missing.' } });
+    }
+  });
 }
 
 export async function getDocumentDownloadUrl(req: Request, res: Response): Promise<void> {

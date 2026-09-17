@@ -34,20 +34,27 @@ async function getDocsDir(): Promise<string> {
 }
 
 /**
- * Copies a picked file into permanent app storage. A native copy is tried first
- * (fast, no memory blow-up for large files); base64 read/write is the fallback
- * for URI schemes the native copy cannot handle.
+ * Copies a picked file (file:// or content://) into permanent app storage.
+ * A native copy is tried first (fast, streams large files); base64
+ * read/write is the fallback. If both fail, the first error is reported
+ * because it is the more meaningful one.
  */
 async function copyToAppStorage(sourceUri: string, destUri: string): Promise<void> {
   try {
     await FileSystem.copyAsync({ from: sourceUri, to: destUri });
-  } catch {
-    const base64 = await FileSystem.readAsStringAsync(sourceUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    await FileSystem.writeAsStringAsync(destUri, base64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
+  } catch (copyError) {
+    try {
+      const base64 = await FileSystem.readAsStringAsync(sourceUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      await FileSystem.writeAsStringAsync(destUri, base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    } catch {
+      throw new Error(
+        `Could not read the selected file. Try picking it again. (${copyError instanceof Error ? copyError.message : String(copyError)})`
+      );
+    }
   }
 }
 
