@@ -2,18 +2,17 @@ import React from 'react';
 import { Pressable, View } from 'react-native';
 import { Text } from '../design-system';
 import { Document } from '../types';
+import { SyncDot } from './SyncDot';
+import { formatBytes } from '../lib/format';
 
 const MIME_ICON: Record<string, string> = {
-  'application/pdf': '📄',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📝',
+  'application/pdf': '📕',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📘',
 };
 
-const SYNC_DOT: Record<string, string> = {
-  pending:         'bg-warning',
-  syncing:         'bg-primary-500',
-  synced:          'bg-success',
-  failed:          'bg-error',
-  needs_attention: 'bg-error',
+const MIME_LABEL: Record<string, string> = {
+  'application/pdf': 'PDF',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
 };
 
 interface Props {
@@ -23,28 +22,31 @@ interface Props {
 }
 
 export function DocumentRow({ document: doc, onPress, onDelete }: Props) {
-  const icon = MIME_ICON[doc.mimeType] ?? '📎';
-  const sizeLabel = doc.fileSize ? `${(doc.fileSize / 1024).toFixed(1)} KB` : '';
+  const meta = [MIME_LABEL[doc.mimeType], doc.fileSize ? formatBytes(doc.fileSize) : null]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onDelete}
       accessibilityRole="button"
       accessibilityLabel={`Open document ${doc.name}`}
-      className="flex-row items-center bg-white dark:bg-surface-800 rounded-lg px-4 py-3.5 active:opacity-80"
+      accessibilityHint="Long press to delete"
+      className="flex-row items-center bg-white dark:bg-surface-800 rounded-lg px-4 py-3.5 border border-surface-100 dark:border-surface-800 active:opacity-80"
     >
-      <Text className="text-xl mr-3">{icon}</Text>
-      <View className="flex-1">
-        <Text variant="label" numberOfLines={1}>{doc.name}</Text>
-        {sizeLabel ? <Text variant="caption" className="text-surface-400">{sizeLabel}</Text> : null}
+      <Text className="text-2xl mr-3">{MIME_ICON[doc.mimeType] ?? '📎'}</Text>
+      <View className="flex-1 mr-2">
+        <Text variant="label" className="text-surface-800 dark:text-surface-100" numberOfLines={1}>{doc.name}</Text>
+        {meta ? <Text variant="caption" className="text-xs">{meta}</Text> : null}
       </View>
-      <View className={`w-2 h-2 rounded-full mr-3 ${SYNC_DOT[doc.syncStatus] ?? 'bg-surface-300'}`} />
+      <SyncDot status={doc.syncStatus} />
       <Pressable
         onPress={onDelete}
         accessibilityLabel={`Delete document ${doc.name}`}
         accessibilityRole="button"
         hitSlop={12}
-        className="p-2"
+        className="px-2 py-1 ml-2"
       >
         <Text variant="caption" className="text-error">Delete</Text>
       </Pressable>

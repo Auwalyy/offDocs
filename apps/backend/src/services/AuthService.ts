@@ -1,6 +1,7 @@
 import argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { Types } from 'mongoose';
 import { User, IUser } from '../models/User';
 import { config } from '../config';
 
@@ -18,8 +19,16 @@ function signAccess(userId: string): { token: string; expiresAt: number } {
   return { token, expiresAt: decoded.exp * 1000 };
 }
 
-function generateRefreshToken(): string {
-  return crypto.randomBytes(64).toString('hex');
+/**
+ * Refresh tokens have the form `<userId>.<random hex>`. The user id prefix lets
+ * us look the user up directly instead of argon2-verifying against every user.
+ */
+function generateRefreshToken(userId: string): string {
+  return `${userId}.${crypto.randomBytes(48).toString('hex')}`;
+}
+
+function invalidRefresh() {
+  return Object.assign(new Error('Invalid refresh token.'), { code: 'INVALID_REFRESH_TOKEN' });
 }
 
 export class AuthService {
@@ -35,30 +44,28 @@ export class AuthService {
   }
 
   async login(email: string, password: string): Promise<{ user: IUser; tokens: TokenPair }> {
-    const user = await User.findOne({ email });
-    if (!user) throw Object.assign(new Error('Invalid credentials.'), { code: 'INVALID_CREDENTIALS' });
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user) throw Object.assign(new Error('Invalid email or password.'), { code: 'INVALID_CREDENTIALS' });
 
     const valid = await argon2.verify(user.passwordHash, password);
-    if (!valid) throw Object.assign(new Error('Invalid credentials.'), { code: 'INVALID_CREDENTIALS' });
+    if (!valid) throw Object.assign(new Error('Invalid email or password.'), { code: 'INVALID_CREDENTIALS' });
 
     const tokens = await this.issueTokens(user);
     return { user, tokens };
   }
 
   async refresh(rawRefreshToken: string): Promise<{ user: IUser; tokens: TokenPair }> {
-    // Find user by verifying the token hash
-    const users = await User.find({ refreshTokenHash: { $ne: null } });
-    let matchedUser: IUser | null = null;
-    for (const u of users) {
-      if (u.refreshTokenHash && await argon2.verify(u.refreshTokenHash, rawRefreshToken)) {
-        matchedUser = u;
-        break;
-      }
-    }
-    if (!matchedUser) throw Object.assign(new Error('Invalid refresh token.'), { code: 'INVALID_REFRESH_TOKEN' });
+    const [userId] = rawRefreshToken.split('.');
+    if (!userId || !Types.ObjectId.isValid(userId)) throw invalidRefresh();
 
-    const tokens = await this.issueTokens(matchedUser);
-    return { user: matchedUser, tokens };
+    const user = await User.findById(userId);
+    if (!user?.refreshTokenHash) throw invalidRefresh();
+
+    const valid = await argon2.verify(user.refreshTokenHash, rawRefreshToken);
+    if (!valid) throw invalidRefresh();
+
+    const tokens = await this.issueTokens(user);
+    return { user, tokens };
   }
 
   async logout(userId: string): Promise<void> {
@@ -66,11 +73,12 @@ export class AuthService {
   }
 
   private async issueTokens(user: IUser): Promise<TokenPair> {
-    const rawRefresh = generateRefreshToken();
+    const userId = user._id.toString();
+    const rawRefresh = generateRefreshToken(userId);
     const refreshTokenHash = await argon2.hash(rawRefresh);
     await User.findByIdAndUpdate(user._id, { refreshTokenHash });
 
-    const { token: accessToken, expiresAt } = signAccess(user._id.toString());
+    const { token: accessToken, expiresAt } = signAccess(userId);
     return { accessToken, refreshToken: rawRefresh, expiresAt };
   }
 }

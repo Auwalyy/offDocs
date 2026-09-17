@@ -19,6 +19,8 @@ const envSchema = z.object({
 function loadConfig() {
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
+    // Logger depends on config, so console is the only option here.
+    // eslint-disable-next-line no-console
     console.error('Invalid environment variables:', parsed.error.flatten().fieldErrors);
     process.exit(1);
   }

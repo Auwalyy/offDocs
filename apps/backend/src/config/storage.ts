@@ -12,6 +12,17 @@ const s3 = new S3Client({
   forcePathStyle: false,
 });
 
+/**
+ * True when the storage env vars look like real values rather than the
+ * `<placeholder>` entries from .env.example.
+ */
+export const isStorageConfigured = [
+  config.STORAGE_ENDPOINT,
+  config.STORAGE_ACCESS_KEY_ID,
+  config.STORAGE_SECRET_ACCESS_KEY,
+  config.STORAGE_BUCKET,
+].every((v) => !/[<>]/.test(v));
+
 export async function uploadFile(params: {
   key: string;
   body: Buffer;

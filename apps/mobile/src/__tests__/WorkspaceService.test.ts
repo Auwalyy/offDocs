@@ -43,15 +43,29 @@ class MockDb {
         if (s.includes('DELETED_AT =')) this.tables['folders']![idx]!['deleted_at'] = params[0];
         if (s.includes('PARENT_ID =')) this.tables['folders']![idx]!['parent_id'] = params[0];
       }
+    } else if (s.startsWith('DELETE FROM SYNC_QUEUE') && s.includes('CLIENT_ENTITY_ID IN')) {
+      const ids = new Set(params);
+      this.tables['sync_queue'] = this.tables['sync_queue']!.filter(
+        (q) => q['status'] === 'synced' || !ids.has(q['client_entity_id'])
+      );
     }
   }
 
-  async getFirstAsync<T>(sql: string, params: unknown[] = []): Promise<T | null> {
+  async getFirstAsync<T>(_sql: string, _params: unknown[] = []): Promise<T | null> {
     return null;
   }
 
   async getAllAsync<T>(sql: string, params: unknown[] = []): Promise<T[]> {
     const s = sql.trim().toUpperCase();
+    if (s.startsWith('WITH RECURSIVE SUBTREE')) {
+      const folders = this.tables['folders']!;
+      const result: Row[] = folders.filter((r) => r['id'] === params[0]);
+      for (let i = 0; i < result.length; i++) {
+        result.push(...folders.filter((r) => r['parent_id'] === result[i]!['id'] && r['deleted_at'] == null));
+      }
+      return result as T[];
+    }
+    if (s.includes('FROM DOCUMENTS')) return [];
     if (s.includes('FROM FOLDERS')) {
       const rows = this.tables['folders']!.filter((r) => r['deleted_at'] == null);
       if (params[0]) return rows.filter((r) => r['parent_id'] === params[0]) as T[];
@@ -138,14 +152,47 @@ describe('WorkspaceService', () => {
     expect(payload.newParentId).toBe(target.id);
   });
 
-  test('deleteFolder creates folder:delete queue entry', async () => {
+  test('deleteFolder of a synced folder creates folder:delete queue entry', async () => {
     const folder = await service.createFolder('To Delete', null);
+    const row = db.getTable('folders').find((r) => r['id'] === folder.id)!;
+    row['server_id'] = 'server-1';
+    db.getTable('sync_queue')[0]!['status'] = 'synced';
+
     await service.deleteFolder(folder.id);
 
     const queue = db.getTable('sync_queue');
     const deleteEntry = queue.find((q) => q['operation'] === 'folder:delete');
     expect(deleteEntry).toBeDefined();
     expect(deleteEntry!['client_entity_id']).toBe(folder.id);
+    expect(row['deleted_at']).not.toBeNull();
+  });
+
+  test('deleteFolder of a never-synced folder cancels its queued operations', async () => {
+    const folder = await service.createFolder('Offline only', null);
+    await service.renameFolder(folder.id, 'Renamed');
+    await service.deleteFolder(folder.id);
+
+    expect(db.getTable('sync_queue')).toHaveLength(0);
+  });
+
+  test('deleteFolder cascades to subfolders', async () => {
+    const parent = await service.createFolder('Parent', null);
+    const child  = await service.createFolder('Child', parent.id);
+    await service.deleteFolder(parent.id);
+
+    const childRow = db.getTable('folders').find((r) => r['id'] === child.id)!;
+    expect(childRow['deleted_at']).not.toBeNull();
+    expect(db.getTable('sync_queue')).toHaveLength(0);
+  });
+
+  test('moveFolder rejects moving a folder into its own subfolder', async () => {
+    const parent = await service.createFolder('Parent', null);
+    const child  = await service.createFolder('Child', parent.id);
+    await expect(service.moveFolder(parent.id, child.id)).rejects.toThrow(/cannot be moved/);
+  });
+
+  test('createFolder rejects blank names', async () => {
+    await expect(service.createFolder('   ', null)).rejects.toThrow(/required/);
   });
 
   test('each operation gets a unique queue entry UUID', async () => {

@@ -62,10 +62,29 @@ export class DocumentRepository {
 
   async findByFolder(folderId: string): Promise<Document[]> {
     const rows = await this.db.getAllAsync<DocumentRow>(
-      'SELECT * FROM documents WHERE folder_id = ? AND deleted_at IS NULL ORDER BY name ASC',
+      'SELECT * FROM documents WHERE folder_id = ? AND deleted_at IS NULL ORDER BY name COLLATE NOCASE ASC',
       [folderId]
     );
     return rows.map(rowToDocument);
+  }
+
+  async findByFolders(folderIds: string[]): Promise<Document[]> {
+    if (folderIds.length === 0) return [];
+    const placeholders = folderIds.map(() => '?').join(', ');
+    const rows = await this.db.getAllAsync<DocumentRow>(
+      `SELECT * FROM documents WHERE folder_id IN (${placeholders}) AND deleted_at IS NULL`,
+      folderIds
+    );
+    return rows.map(rowToDocument);
+  }
+
+  /** Finds a live document in the folder that looks like the same file (duplicate import). */
+  async findDuplicate(folderId: string, name: string, fileSize: number): Promise<Document | null> {
+    const row = await this.db.getFirstAsync<DocumentRow>(
+      'SELECT * FROM documents WHERE folder_id = ? AND name = ? AND file_size = ? AND deleted_at IS NULL',
+      [folderId, name, fileSize]
+    );
+    return row ? rowToDocument(row) : null;
   }
 
   async findByContentHash(hash: string): Promise<Document | null> {

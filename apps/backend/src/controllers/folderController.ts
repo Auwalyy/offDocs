@@ -44,6 +44,8 @@ export async function updateFolder(req: Request, res: Response): Promise<void> {
     const e = err as Error & { code?: string };
     if (e.code === 'FOLDER_NOT_FOUND') {
       res.status(404).json({ error: { code: 'FOLDER_NOT_FOUND', message: e.message } });
+    } else if (e.code === 'INVALID_MOVE') {
+      res.status(400).json({ error: { code: 'INVALID_MOVE', message: e.message } });
     } else {
       res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Failed to update folder.' } });
     }

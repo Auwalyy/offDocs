@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, PressableProps, View } from 'react-native';
+import { ActivityIndicator, Pressable, PressableProps } from 'react-native';
 import { Text } from './Text';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';

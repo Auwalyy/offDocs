@@ -14,7 +14,12 @@ export function RenameFolderModal({ visible, currentName, onClose, onRename }: P
   const [error, setError]   = useState('');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { setName(currentName); }, [currentName]);
+  useEffect(() => {
+    if (visible) {
+      setName(currentName);
+      setError('');
+    }
+  }, [visible, currentName]);
 
   async function handleRename() {
     if (!name.trim()) { setError('Name is required.'); return; }

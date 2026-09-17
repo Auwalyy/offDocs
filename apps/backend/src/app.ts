@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { connectDatabase } from './config/database';
+import { isStorageConfigured } from './config/storage';
 import { router } from './routes';
 import { logger } from './utils/logger';
 import { config } from './config';
@@ -22,21 +24,40 @@ app.use((_req, res) => {
 });
 
 // Global error handler
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  if (err instanceof multer.MulterError) {
+    const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    res.status(status).json({ error: { code: err.code, message: err.message } });
+    return;
+  }
+  if (err.message.startsWith('Unsupported file type')) {
+    res.status(415).json({ error: { code: 'UNSUPPORTED_FILE_TYPE', message: err.message } });
+    return;
+  }
+  if ((err as Error & { type?: string }).type === 'entity.parse.failed') {
+    res.status(400).json({ error: { code: 'INVALID_JSON', message: 'Malformed JSON body.' } });
+    return;
+  }
   logger.error('Unhandled error', { message: err.message, stack: err.stack });
   res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred.' } });
 });
 
 async function start() {
   await connectDatabase();
+  if (!isStorageConfigured) {
+    logger.warn('Object storage is not configured (STORAGE_* env vars are placeholders). Document uploads will be rejected.');
+  }
   const port = parseInt(config.PORT, 10);
-  app.listen(port, () => logger.info(`FolioSync API listening on port ${port}`));
+  // Bind to all interfaces so phones/emulators on the LAN can reach the API.
+  app.listen(port, '0.0.0.0', () => logger.info(`FolioSync API listening on port ${port}`));
 }
 
-start().catch((err: unknown) => {
-  logger.error('Failed to start server', { err });
-  process.exit(1);
-});
+// Only listen when run directly (dev/prod), not when imported by tests.
+if (require.main === module) {
+  start().catch((err: unknown) => {
+    logger.error('Failed to start server', { err });
+    process.exit(1);
+  });
+}
 
 export { app };

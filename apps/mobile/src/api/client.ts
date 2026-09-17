@@ -1,39 +1,79 @@
 import { AuthService } from '../features/auth/AuthService';
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api/v1';
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api/v1';
+
+const REQUEST_TIMEOUT_MS = 20_000;
 
 export interface ApiResponse<T> {
   data: T;
 }
 
-export interface ApiError {
+export interface ApiErrorBody {
   error: { code: string; message: string };
+}
+
+/** Error thrown for any failed API call. `status` is 0 when the server was unreachable. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+
+  /** 4xx errors (except auth/timeouts/rate limits) will not succeed on retry. */
+  get isPermanent(): boolean {
+    return this.status >= 400 && this.status < 500 && ![401, 408, 429].includes(this.status);
+  }
+}
+
+/** Turns a raw response body into a readable ApiError. */
+export function toApiError(status: number, rawBody: string): ApiError {
+  try {
+    const parsed = JSON.parse(rawBody) as Partial<ApiErrorBody>;
+    if (parsed.error?.message) return new ApiError(parsed.error.message, status, parsed.error.code);
+  } catch {
+    // not JSON — fall through
+  }
+  return new ApiError(`Server responded with HTTP ${status}`, status);
 }
 
 class ApiClient {
   private authService: AuthService | null = null;
+  private refreshInFlight: Promise<string | null> | null = null;
 
   setAuthService(service: AuthService): void {
     this.authService = service;
   }
 
-  private async getAccessToken(): Promise<string | null> {
+  /** Returns a non-expired access token, refreshing it first when needed. */
+  async getValidAccessToken(): Promise<string | null> {
     if (!this.authService) return null;
     const tokens = await this.authService.getStoredTokens();
     if (!tokens) return null;
 
     if (this.authService.isTokenExpired(tokens.expiresAt)) {
-      return this.refreshToken(tokens.refreshToken);
+      return this.refreshAccessToken();
     }
     return tokens.accessToken;
   }
 
-  private async refreshToken(refreshToken: string): Promise<string | null> {
+  /** Refreshes the session. Concurrent callers share a single request. */
+  refreshAccessToken(): Promise<string | null> {
+    if (!this.refreshInFlight) {
+      this.refreshInFlight = this.doRefresh().finally(() => {
+        this.refreshInFlight = null;
+      });
+    }
+    return this.refreshInFlight;
+  }
+
+  private async doRefresh(): Promise<string | null> {
+    const tokens = await this.authService?.getStoredTokens();
+    if (!tokens) return null;
     try {
-      const res = await fetch(`${BASE_URL}/auth/refresh`, {
+      const res = await this.fetchWithTimeout(`${API_BASE_URL}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
+        body: JSON.stringify({ refreshToken: tokens.refreshToken }),
       });
       if (!res.ok) return null;
       const json = (await res.json()) as ApiResponse<{
@@ -53,49 +93,71 @@ class ApiClient {
     }
   }
 
+  async fetchWithTimeout(url: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      const aborted = err instanceof Error && err.name === 'AbortError';
+      throw new ApiError(
+        aborted
+          ? 'The server took too long to respond.'
+          : `Cannot reach the server at ${API_BASE_URL}. Check that the backend is running and the phone is on the same network.`,
+        0,
+        aborted ? 'TIMEOUT' : 'NETWORK_ERROR'
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async request<T>(
     path: string,
     options: RequestInit & { idempotencyKey?: string } = {}
   ): Promise<T> {
-    const token = await this.getAccessToken();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...(options.headers as Record<string, string>),
+    const { idempotencyKey, ...init } = options;
+
+    const send = async (token: string | null) => {
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(init.headers as Record<string, string> | undefined),
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+      return this.fetchWithTimeout(`${API_BASE_URL}${path}`, { ...init, headers });
     };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
 
-    const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+    let token = await this.getValidAccessToken();
+    let res = await send(token);
 
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as Partial<ApiError>;
-      throw new Error(body.error?.message ?? `HTTP ${res.status}`);
+    // The access token may have been revoked or the clock may be off — refresh once and retry.
+    if (res.status === 401 && token) {
+      token = await this.refreshAccessToken();
+      if (token) res = await send(token);
     }
 
-    return res.json() as Promise<T>;
+    const raw = await res.text();
+    if (!res.ok) throw toApiError(res.status, raw);
+
+    // 204 No Content (e.g. DELETE) has no body to parse.
+    return (raw ? JSON.parse(raw) : undefined) as T;
   }
 
-  async post<T>(path: string, body: unknown, idempotencyKey?: string): Promise<T> {
-    return this.request<T>(path, {
-      method: 'POST',
-      body: JSON.stringify(body),
-      idempotencyKey,
-    });
+  post<T>(path: string, body: unknown, idempotencyKey?: string): Promise<T> {
+    return this.request<T>(path, { method: 'POST', body: JSON.stringify(body), idempotencyKey });
   }
 
-  async patch<T>(path: string, body: unknown, idempotencyKey?: string): Promise<T> {
-    return this.request<T>(path, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-      idempotencyKey,
-    });
+  patch<T>(path: string, body: unknown, idempotencyKey?: string): Promise<T> {
+    return this.request<T>(path, { method: 'PATCH', body: JSON.stringify(body), idempotencyKey });
   }
 
-  async delete<T>(path: string, idempotencyKey?: string): Promise<T> {
+  delete<T = void>(path: string, idempotencyKey?: string): Promise<T> {
     return this.request<T>(path, { method: 'DELETE', idempotencyKey });
   }
 
-  async get<T>(path: string): Promise<T> {
+  get<T>(path: string): Promise<T> {
     return this.request<T>(path, { method: 'GET' });
   }
 }

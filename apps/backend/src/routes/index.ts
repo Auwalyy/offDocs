@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import { Types } from 'mongoose';
 import { authenticate } from '../middleware/authenticate';
 import { validate } from '../middleware/validate';
 import { idempotency } from '../middleware/idempotency';
 import { upload } from '../middleware/upload';
+import { isStorageConfigured } from '../config/storage';
 import {
   registerSchema, loginSchema, refreshSchema,
   createFolderSchema, updateFolderSchema,
@@ -14,6 +16,15 @@ import * as docs     from '../controllers/documentController';
 import * as workspace from '../controllers/workspaceController';
 
 const router = Router();
+
+// Reject malformed ids up front instead of letting Mongoose throw a CastError (500).
+router.param('serverId', (_req, res, next, value: string) => {
+  if (!Types.ObjectId.isValid(value)) {
+    res.status(400).json({ error: { code: 'INVALID_ID', message: 'Invalid resource id.' } });
+    return;
+  }
+  next();
+});
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 router.post('/auth/register', validate(registerSchema), auth.register);
@@ -31,7 +42,22 @@ router.patch( '/folders/:serverId', authenticate, idempotency, validate(updateFo
 router.delete('/folders/:serverId', authenticate, idempotency, folders.deleteFolder);
 
 // ─── Documents ────────────────────────────────────────────────────────────────
-router.post(  '/documents',                    authenticate, idempotency, upload.single('file'), docs.createDocument);
+router.post(
+  '/documents',
+  authenticate,
+  (_req, res, next) => {
+    if (isStorageConfigured) return next();
+    res.status(503).json({
+      error: {
+        code: 'STORAGE_NOT_CONFIGURED',
+        message: 'File storage is not configured on the server. Set the STORAGE_* variables in the backend .env.',
+      },
+    });
+  },
+  idempotency,
+  upload.single('file'),
+  docs.createDocument,
+);
 router.get(   '/documents/:serverId/download', authenticate, docs.getDocumentDownloadUrl);
 router.delete('/documents/:serverId',          authenticate, idempotency, docs.deleteDocument);
 

@@ -2,14 +2,29 @@ import * as Network from 'expo-network';
 
 type ConnectivityListener = (isOnline: boolean) => void;
 
+const POLL_INTERVAL_MS = 5_000;
+
+/**
+ * `isInternetReachable` is often `null`/unknown (emulators, some Android
+ * builds, LAN-only dev setups). Treat the device as online whenever it is
+ * connected and reachability has not been explicitly ruled out — the sync
+ * engine handles a server that turns out to be unreachable.
+ */
+function toOnline(state: Network.NetworkState): boolean {
+  return state.isConnected === true && state.isInternetReachable !== false;
+}
+
 class ConnectivityMonitor {
   private listeners: Set<ConnectivityListener> = new Set();
   private _isOnline = false;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
 
   async initialize(): Promise<void> {
-    const state = await Network.getNetworkStateAsync();
-    this._isOnline = state.isInternetReachable ?? false;
+    try {
+      this._isOnline = toOnline(await Network.getNetworkStateAsync());
+    } catch {
+      this._isOnline = true; // unknown — let sync attempts decide
+    }
     this.startPolling();
   }
 
@@ -23,20 +38,24 @@ class ConnectivityMonitor {
   }
 
   private startPolling(): void {
+    if (this.pollInterval) return;
     // expo-network does not provide a native event subscription in all environments.
-    // Poll every 5 seconds — lightweight and sufficient for sync triggering.
-    this.pollInterval = setInterval(async () => {
-      const state = await Network.getNetworkStateAsync();
-      const online = state.isInternetReachable ?? false;
-      if (online !== this._isOnline) {
-        this._isOnline = online;
-        this.listeners.forEach((l) => l(online));
-      }
-    }, 5_000);
+    this.pollInterval = setInterval(() => {
+      Network.getNetworkStateAsync()
+        .then((state) => {
+          const online = toOnline(state);
+          if (online !== this._isOnline) {
+            this._isOnline = online;
+            this.listeners.forEach((l) => l(online));
+          }
+        })
+        .catch(() => undefined);
+    }, POLL_INTERVAL_MS);
   }
 
   destroy(): void {
     if (this.pollInterval) clearInterval(this.pollInterval);
+    this.pollInterval = null;
     this.listeners.clear();
   }
 }

@@ -2,14 +2,7 @@ import React from 'react';
 import { Pressable, View } from 'react-native';
 import { Text } from '../design-system';
 import { Folder } from '../types';
-
-const SYNC_DOT: Record<string, string> = {
-  pending:         'bg-warning',
-  syncing:         'bg-primary-500',
-  synced:          'bg-success',
-  failed:          'bg-error',
-  needs_attention: 'bg-error',
-};
+import { SyncDot } from './SyncDot';
 
 interface Props {
   folder: Folder;
@@ -21,25 +14,27 @@ export function FolderRow({ folder, onPress, onDelete }: Props) {
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onDelete}
       accessibilityRole="button"
       accessibilityLabel={`Open folder ${folder.name}`}
-      className="flex-row items-center bg-white dark:bg-surface-800 rounded-lg px-4 py-3.5 active:opacity-80"
+      accessibilityHint="Long press to delete"
+      className="flex-row items-center bg-white dark:bg-surface-800 rounded-lg px-4 py-3.5 border border-surface-100 dark:border-surface-800 active:opacity-80"
     >
-      <Text className="text-xl mr-3">📁</Text>
-      <View className="flex-1">
-        <Text variant="label">{folder.name}</Text>
+      <Text className="text-2xl mr-3">📁</Text>
+      <View className="flex-1 mr-2">
+        <Text variant="label" className="text-surface-800 dark:text-surface-100" numberOfLines={1}>{folder.name}</Text>
       </View>
-      <View className={`w-2 h-2 rounded-full mr-3 ${SYNC_DOT[folder.syncStatus] ?? 'bg-surface-300'}`} />
+      <SyncDot status={folder.syncStatus} />
       <Pressable
         onPress={onDelete}
         accessibilityLabel={`Delete folder ${folder.name}`}
         accessibilityRole="button"
         hitSlop={12}
-        className="p-2"
+        className="px-2 py-1 ml-2"
       >
         <Text variant="caption" className="text-error">Delete</Text>
       </Pressable>
-      <Text className="text-surface-400 ml-1">›</Text>
+      <Text className="text-surface-400 text-xl ml-1">›</Text>
     </Pressable>
   );
 }

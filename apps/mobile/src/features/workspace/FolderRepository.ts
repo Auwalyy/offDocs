@@ -60,12 +60,33 @@ export class FolderRepository {
   async findByParent(parentId: string | null): Promise<Folder[]> {
     const rows = parentId
       ? await this.db.getAllAsync<FolderRow>(
-          'SELECT * FROM folders WHERE parent_id = ? AND deleted_at IS NULL ORDER BY name ASC',
+          'SELECT * FROM folders WHERE parent_id = ? AND deleted_at IS NULL ORDER BY name COLLATE NOCASE ASC',
           [parentId]
         )
       : await this.db.getAllAsync<FolderRow>(
-          'SELECT * FROM folders WHERE parent_id IS NULL AND deleted_at IS NULL ORDER BY name ASC'
+          'SELECT * FROM folders WHERE parent_id IS NULL AND deleted_at IS NULL ORDER BY name COLLATE NOCASE ASC'
         );
+    return rows.map(rowToFolder);
+  }
+
+  async findAll(): Promise<Folder[]> {
+    const rows = await this.db.getAllAsync<FolderRow>(
+      'SELECT * FROM folders WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE ASC'
+    );
+    return rows.map(rowToFolder);
+  }
+
+  /** Returns the folder and all of its live descendants. */
+  async findSubtree(id: string): Promise<Folder[]> {
+    const rows = await this.db.getAllAsync<FolderRow>(
+      `WITH RECURSIVE subtree(id) AS (
+         SELECT id FROM folders WHERE id = ?
+         UNION
+         SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id WHERE f.deleted_at IS NULL
+       )
+       SELECT folders.* FROM folders JOIN subtree ON folders.id = subtree.id`,
+      [id]
+    );
     return rows.map(rowToFolder);
   }
 

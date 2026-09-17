@@ -64,6 +64,22 @@ export class SyncQueueRepository {
     return rows.map(rowToItem);
   }
 
+  /** Recent queue items with the name of the folder/document they refer to. */
+  async getRecentActivity(limit = 200): Promise<(SyncQueueItem & { entityName: string | null })[]> {
+    const rows = await this.db.getAllAsync<QueueRow & { entity_name: string | null }>(
+      `SELECT q.*, COALESCE(f.name, d.name) AS entity_name
+         FROM sync_queue q
+         LEFT JOIN folders f   ON q.entity_type = 'folder'   AND f.id = q.client_entity_id
+         LEFT JOIN documents d ON q.entity_type = 'document' AND d.id = q.client_entity_id
+        ORDER BY
+          CASE q.status WHEN 'needs_attention' THEN 0 WHEN 'failed' THEN 1 WHEN 'syncing' THEN 2 WHEN 'pending' THEN 3 ELSE 4 END,
+          q.created_at DESC
+        LIMIT ?`,
+      [limit]
+    );
+    return rows.map((row) => ({ ...rowToItem(row), entityName: row.entity_name }));
+  }
+
   async markSyncing(id: string): Promise<void> {
     await this.db.runAsync(
       "UPDATE sync_queue SET status = 'syncing' WHERE id = ?",
@@ -91,6 +107,53 @@ export class SyncQueueRepository {
       "SELECT COUNT(*) as count FROM sync_queue WHERE status IN ('failed', 'needs_attention')"
     );
     return row?.count ?? 0;
+  }
+
+  /**
+   * Items left in 'syncing' belong to a sync that was interrupted (app killed,
+   * crash). Put them back in the queue so they are not stuck forever.
+   */
+  async resetInterrupted(): Promise<void> {
+    await this.db.runAsync("UPDATE sync_queue SET status = 'pending' WHERE status = 'syncing'");
+  }
+
+  /** Leaves an item pending without consuming a retry (e.g. waiting on its parent). */
+  async markWaiting(id: string, reason: string): Promise<void> {
+    await this.db.runAsync(
+      "UPDATE sync_queue SET status = 'pending', last_error = ? WHERE id = ?",
+      [reason, id]
+    );
+  }
+
+  /** Makes every failed / needs-attention item eligible for an immediate retry. */
+  async retryFailed(): Promise<void> {
+    await this.db.runAsync(
+      `UPDATE sync_queue
+         SET status = 'pending', retry_count = 0, next_retry_at = NULL, last_error = NULL
+       WHERE status IN ('failed', 'needs_attention')`
+    );
+  }
+
+  /** Removes synced history older than `olderThan` (ms epoch). */
+  async pruneSynced(olderThan: number): Promise<void> {
+    await this.db.runAsync(
+      "DELETE FROM sync_queue WHERE status = 'synced' AND created_at < ?",
+      [olderThan]
+    );
+  }
+
+  /** Drops queued operations that have not reached the server yet for the given entities. */
+  async deleteUnsyncedForEntities(clientEntityIds: string[]): Promise<void> {
+    if (clientEntityIds.length === 0) return;
+    const placeholders = clientEntityIds.map(() => '?').join(', ');
+    await this.db.runAsync(
+      `DELETE FROM sync_queue WHERE status != 'synced' AND client_entity_id IN (${placeholders})`,
+      clientEntityIds
+    );
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.db.runAsync('DELETE FROM sync_queue');
   }
 
   async deleteByEntityId(clientEntityId: string): Promise<void> {

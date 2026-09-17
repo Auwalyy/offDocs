@@ -55,7 +55,6 @@ process.env['STORAGE_SECRET_ACCESS_KEY'] = 'test_secret';
 process.env['STORAGE_BUCKET']            = 'test-bucket';
 
 // Import app AFTER mocks are set up
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { app } = require('../src/app') as { app: import('express').Express };
 
 describe('POST /api/v1/auth/register', () => {

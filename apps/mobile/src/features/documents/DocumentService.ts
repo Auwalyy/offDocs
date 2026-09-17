@@ -1,10 +1,28 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { SQLiteDatabase } from 'expo-sqlite';
 import uuid from 'react-native-uuid';
-import { Document, SyncQueueItem } from '../../types';
+import { Document } from '../../types';
 import { DocumentRepository } from './DocumentRepository';
 import { SyncQueueRepository } from '../sync/SyncQueueRepository';
+import { makeQueueItem } from '../workspace/WorkspaceService';
 import { withTransaction } from '../../database/transaction';
+
+export const SUPPORTED_MIME_TYPES = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+] as const;
+
+const EXTENSION_MIME: Record<string, string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+/** Pickers sometimes report `application/octet-stream`; fall back to the file extension. */
+function resolveMimeType(name: string, reported: string | undefined): string | null {
+  if (reported && (SUPPORTED_MIME_TYPES as readonly string[]).includes(reported)) return reported;
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  return EXTENSION_MIME[ext] ?? null;
+}
 
 async function getDocsDir(): Promise<string> {
   const dir = `${FileSystem.documentDirectory}foliosync/documents/`;
@@ -16,22 +34,21 @@ async function getDocsDir(): Promise<string> {
 }
 
 /**
- * Copies a file from any URI scheme (file://, content://, cache://) to a
- * permanent app-owned location using base64 read/write — the only method
- * that works reliably across all URI types in Expo Go on Android.
+ * Copies a picked file into permanent app storage. A native copy is tried first
+ * (fast, no memory blow-up for large files); base64 read/write is the fallback
+ * for URI schemes the native copy cannot handle.
  */
 async function copyToAppStorage(sourceUri: string, destUri: string): Promise<void> {
-  const base64 = await FileSystem.readAsStringAsync(sourceUri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-  await FileSystem.writeAsStringAsync(destUri, base64, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-}
-
-function computeImportId(name: string, size: number, lastModified: number): string {
-  const NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
-  return uuid.v5(`${name}:${size}:${lastModified}`, NAMESPACE) as string;
+  try {
+    await FileSystem.copyAsync({ from: sourceUri, to: destUri });
+  } catch {
+    const base64 = await FileSystem.readAsStringAsync(sourceUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    await FileSystem.writeAsStringAsync(destUri, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+  }
 }
 
 export class DocumentService {
@@ -46,29 +63,27 @@ export class DocumentService {
   async importDocument(params: {
     sourceUri: string;
     name: string;
-    mimeType: string;
+    mimeType?: string;
     fileSize: number;
     folderId: string;
-    lastModified?: number;
   }): Promise<Document> {
-    const { sourceUri, name, mimeType, fileSize, folderId, lastModified = 0 } = params;
+    const { sourceUri, name, fileSize, folderId } = params;
 
-    const importId = computeImportId(name, fileSize, lastModified);
+    const mimeType = resolveMimeType(name, params.mimeType);
+    if (!mimeType) throw new Error('Only PDF and DOCX files are supported.');
 
-    // Duplicate check
-    const existing = await this.docRepo.findById(importId);
-    if (existing) return existing;
+    // Importing the same file into the same folder twice is a no-op.
+    const duplicate = await this.docRepo.findDuplicate(folderId, name, fileSize);
+    if (duplicate) return duplicate;
 
+    const id = uuid.v4() as string;
     const docsDir = await getDocsDir();
-    const safeFilename = `${importId}_${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    const destUri = `${docsDir}${safeFilename}`;
-
+    const destUri = `${docsDir}${id}_${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     await copyToAppStorage(sourceUri, destUri);
 
     const now = Date.now();
-
     const doc: Document = {
-      id: importId,
+      id,
       serverId: null,
       folderId,
       name,
@@ -83,51 +98,42 @@ export class DocumentService {
       deletedAt: null,
     };
 
-    const queueItem: SyncQueueItem = {
-      id: uuid.v4() as string,
-      entityType: 'document',
-      operation: 'document:create',
-      payload: JSON.stringify({ clientId: doc.id, folderId, name, mimeType, fileSize, localUri: destUri }),
-      clientEntityId: doc.id,
-      status: 'pending',
-      retryCount: 0,
-      lastError: null,
-      nextRetryAt: null,
-      createdAt: now,
-    };
+    const queueItem = makeQueueItem('document', 'document:create', id, {
+      clientId: id, folderId, name, mimeType, fileSize, localUri: destUri,
+    }, now);
 
-    await withTransaction(this.db, async () => {
-      await this.docRepo.insert(doc);
-      await this.queueRepo.insert(queueItem);
-    });
+    try {
+      await withTransaction(this.db, async () => {
+        await this.docRepo.insert(doc);
+        await this.queueRepo.insert(queueItem);
+      });
+    } catch (err) {
+      await FileSystem.deleteAsync(destUri, { idempotent: true }).catch(() => undefined);
+      throw err;
+    }
 
     return doc;
   }
 
   async deleteDocument(id: string): Promise<void> {
-    const now = Date.now();
     const doc = await this.docRepo.findById(id);
-
-    const queueItem: SyncQueueItem = {
-      id: uuid.v4() as string,
-      entityType: 'document',
-      operation: 'document:delete',
-      payload: JSON.stringify({ clientId: id }),
-      clientEntityId: id,
-      status: 'pending',
-      retryCount: 0,
-      lastError: null,
-      nextRetryAt: null,
-      createdAt: now,
-    };
+    if (!doc) return;
+    const now = Date.now();
 
     await withTransaction(this.db, async () => {
       await this.docRepo.softDelete(id, now);
-      await this.queueRepo.insert(queueItem);
+      if (doc.serverId) {
+        await this.queueRepo.insert(
+          makeQueueItem('document', 'document:delete', id, { clientId: id }, now)
+        );
+      } else {
+        // Never uploaded — just cancel the pending upload.
+        await this.queueRepo.deleteUnsyncedForEntities([id]);
+      }
     });
 
-    if (doc?.localUri) {
-      await FileSystem.deleteAsync(doc.localUri, { idempotent: true });
+    if (doc.localUri) {
+      await FileSystem.deleteAsync(doc.localUri, { idempotent: true }).catch(() => undefined);
     }
   }
 

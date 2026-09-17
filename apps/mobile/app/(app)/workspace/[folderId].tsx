@@ -1,31 +1,31 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { ActivityIndicator, Alert, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
-import { Text, SyncBadge } from '../../../src/design-system';
+import { Text, SyncBadge, ScreenHeader, HeaderAction } from '../../../src/design-system';
 import { Document, Folder } from '../../../src/types';
 import { getServices } from '../../../src/lib/ServiceRegistry';
 import { useApp } from '../../../src/hooks/useApp';
+import { useReloadOnChange } from '../../../src/hooks/useReloadOnChange';
 import { FolderRow } from '../../../src/components/FolderRow';
 import { DocumentRow } from '../../../src/components/DocumentRow';
 import { CreateFolderModal } from '../../../src/components/CreateFolderModal';
 import { RenameFolderModal } from '../../../src/components/RenameFolderModal';
 import { MoveFolderModal } from '../../../src/components/MoveFolderModal';
-
-const SUPPORTED_MIME = [
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-];
+import { SUPPORTED_MIME_TYPES } from '../../../src/features/documents/DocumentService';
+import { confirmDelete, showError } from '../../../src/lib/alerts';
 
 export default function FolderScreen() {
   const { folderId } = useLocalSearchParams<{ folderId: string }>();
   const router = useRouter();
-  const { isOnline, isSyncing, failedSyncCount } = useApp();
+  const { isOnline, isSyncing, failedSyncCount, triggerSync, notifyLocalChange } = useApp();
 
   const [folder, setFolder]         = useState<Folder | null>(null);
   const [subFolders, setSubFolders] = useState<Folder[]>([]);
   const [documents, setDocuments]   = useState<Document[]>([]);
-  const [loading, setLoading]       = useState(true);
+  const [loaded, setLoaded]         = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [importing, setImporting]   = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showRename, setShowRename] = useState(false);
   const [showMove, setShowMove]     = useState(false);
@@ -41,92 +41,137 @@ export default function FolderScreen() {
     setFolder(f);
     setSubFolders(subs);
     setDocuments(docs);
-    setLoading(false);
+    setLoaded(true);
   }, [folderId]);
 
-  useEffect(() => { load(); }, [load]);
+  useReloadOnChange(load);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await triggerSync();
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function handleImport() {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: SUPPORTED_MIME,
-      copyToCacheDirectory: true,
-    });
-    if (result.canceled || !result.assets?.[0]) return;
-    const asset = result.assets[0];
-    const { documents: docSvc } = getServices();
-    await docSvc.importDocument({
-      sourceUri: asset.uri,
-      name: asset.name,
-      mimeType: asset.mimeType ?? 'application/octet-stream',
-      fileSize: asset.size ?? 0,
-      folderId: folderId!,
-      lastModified: asset.lastModified ?? 0,
-    });
-    await load();
+    if (!folderId || importing) return;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [...SUPPORTED_MIME_TYPES],
+        copyToCacheDirectory: true,
+        multiple: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+
+      setImporting(true);
+      const { documents: docSvc } = getServices();
+      for (const asset of result.assets) {
+        await docSvc.importDocument({
+          sourceUri: asset.uri,
+          name: asset.name,
+          mimeType: asset.mimeType,
+          fileSize: asset.size ?? 0,
+          folderId,
+        });
+      }
+      notifyLocalChange();
+    } catch (e) {
+      showError('Import failed', e);
+    } finally {
+      setImporting(false);
+    }
   }
 
-  async function handleDeleteFolder(id: string) {
-    Alert.alert('Delete Folder', 'Delete this folder?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive',
-        onPress: async () => {
-          const { workspace } = getServices();
-          await workspace.deleteFolder(id);
-          await load();
-        },
-      },
-    ]);
+  function handleDeleteFolder(target: Folder) {
+    confirmDelete('Delete folder', `Delete “${target.name}” and everything inside it?`, async () => {
+      try {
+        await getServices().workspace.deleteFolder(target.id);
+        if (target.id === folderId) router.back();
+        notifyLocalChange();
+      } catch (e) {
+        showError('Could not delete folder', e);
+      }
+    });
   }
 
-  async function handleDeleteDocument(id: string) {
-    Alert.alert('Delete Document', 'Remove this document?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive',
-        onPress: async () => {
-          const { documents: docSvc } = getServices();
-          await docSvc.deleteDocument(id);
-          await load();
-        },
-      },
-    ]);
+  function openFolderMenu(target: Folder) {
+    // Android alerts show at most three buttons, so Cancel is only added on iOS
+    // (Android dismisses on outside tap).
+    Alert.alert(
+      target.name,
+      undefined,
+      [
+        { text: 'Rename', onPress: () => setShowRename(true) },
+        { text: 'Move', onPress: () => setShowMove(true) },
+        { text: 'Delete', style: 'destructive', onPress: () => handleDeleteFolder(target) },
+        ...(Platform.OS === 'ios' ? [{ text: 'Cancel', style: 'cancel' as const }] : []),
+      ],
+      { cancelable: true }
+    );
   }
+
+  function handleDeleteDocument(doc: Document) {
+    confirmDelete('Delete document', `Remove “${doc.name}”?`, async () => {
+      try {
+        await getServices().documents.deleteDocument(doc.id);
+        notifyLocalChange();
+      } catch (e) {
+        showError('Could not delete document', e);
+      }
+    });
+  }
+
+  if (loaded && !folder) {
+    return (
+      <View className="flex-1 bg-surface-50 dark:bg-surface-950">
+        <ScreenHeader title="Folder" />
+        <View className="flex-1 items-center justify-center px-8 gap-2">
+          <Text variant="h3">Folder not found</Text>
+          <Text variant="caption" className="text-center">It may have been deleted.</Text>
+        </View>
+      </View>
+    );
+  }
+
+  const isEmpty = loaded && subFolders.length === 0 && documents.length === 0;
 
   return (
     <View className="flex-1 bg-surface-50 dark:bg-surface-950">
-      {/* Header */}
-      <View className="flex-row items-center justify-between px-4 pt-14 pb-4 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800">
-        <View className="flex-row items-center gap-3 flex-1">
-          <Pressable onPress={() => router.back()} accessibilityLabel="Go back" className="p-1">
-            <Text className="text-primary-600 text-lg">‹</Text>
-          </Pressable>
-          <Text variant="h3" className="flex-1" numberOfLines={1}>{folder?.name ?? '…'}</Text>
-        </View>
-        <View className="flex-row items-center gap-2">
-          <SyncBadge isOnline={isOnline} isSyncing={isSyncing} hasError={failedSyncCount > 0} />
-          <Pressable onPress={() => setShowRename(true)} accessibilityLabel="Rename folder" className="p-2">
-            <Text variant="caption" className="text-primary-600">Rename</Text>
-          </Pressable>
-          <Pressable onPress={() => setShowMove(true)} accessibilityLabel="Move folder" className="p-2">
-            <Text variant="caption" className="text-primary-600">Move</Text>
-          </Pressable>
-        </View>
-      </View>
+      <ScreenHeader
+        title={folder?.name ?? ''}
+        right={
+          <>
+            <SyncBadge
+              isOnline={isOnline}
+              isSyncing={isSyncing}
+              hasError={failedSyncCount > 0}
+              onPress={() => router.push('/(app)/sync')}
+            />
+            {folder ? (
+              <HeaderAction label="Edit" onPress={() => openFolderMenu(folder)} accessibilityLabel="Folder options" />
+            ) : null}
+          </>
+        }
+      />
 
       <ScrollView
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12, gap: 8 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 180, gap: 8 }}
       >
         {subFolders.length > 0 && (
           <>
-            <Text variant="label" className="mt-3 mb-1 text-surface-400">Folders</Text>
+            <Text variant="label" className="mt-3 mb-1 text-surface-400 uppercase text-xs tracking-wide">
+              Folders · {subFolders.length}
+            </Text>
             {subFolders.map((f) => (
               <FolderRow
                 key={f.id}
                 folder={f}
                 onPress={() => router.push(`/(app)/workspace/${f.id}`)}
-                onDelete={() => handleDeleteFolder(f.id)}
+                onDelete={() => handleDeleteFolder(f)}
               />
             ))}
           </>
@@ -134,42 +179,48 @@ export default function FolderScreen() {
 
         {documents.length > 0 && (
           <>
-            <Text variant="label" className="mt-3 mb-1 text-surface-400">Documents</Text>
+            <Text variant="label" className="mt-3 mb-1 text-surface-400 uppercase text-xs tracking-wide">
+              Documents · {documents.length}
+            </Text>
             {documents.map((d) => (
               <DocumentRow
                 key={d.id}
                 document={d}
                 onPress={() => router.push(`/(app)/document/${d.id}`)}
-                onDelete={() => handleDeleteDocument(d.id)}
+                onDelete={() => handleDeleteDocument(d)}
               />
             ))}
           </>
         )}
 
-        {!loading && subFolders.length === 0 && documents.length === 0 && (
-          <View className="items-center py-16">
-            <Text variant="caption" className="text-surface-400">This folder is empty</Text>
+        {isEmpty && (
+          <View className="items-center py-20 gap-2">
+            <Text className="text-5xl">🗂️</Text>
+            <Text variant="h3">This folder is empty</Text>
+            <Text variant="caption" className="text-center">Import a PDF or DOCX, or add a subfolder.</Text>
           </View>
         )}
       </ScrollView>
 
-      {/* FAB row */}
-      <View className="absolute bottom-8 right-6 gap-3">
+      <View className="absolute bottom-8 right-6 items-end gap-3">
         <Pressable
           onPress={handleImport}
+          disabled={importing}
           accessibilityLabel="Import document"
           accessibilityRole="button"
-          className="w-14 h-14 rounded-full bg-surface-700 items-center justify-center shadow-md active:opacity-80"
+          className="flex-row items-center gap-2 h-12 px-4 rounded-full bg-surface-700 shadow-md active:opacity-80"
         >
-          <Text className="text-white text-xl">↑</Text>
+          {importing ? <ActivityIndicator color="#fff" /> : <Text className="text-white text-lg">↑</Text>}
+          <Text className="text-white font-medium">{importing ? 'Importing…' : 'Import'}</Text>
         </Pressable>
         <Pressable
           onPress={() => setShowCreate(true)}
           accessibilityLabel="Create new folder"
           accessibilityRole="button"
-          className="w-14 h-14 rounded-full bg-primary-600 items-center justify-center shadow-lg active:bg-primary-700"
+          className="flex-row items-center gap-2 h-14 px-5 rounded-full bg-primary-600 shadow-lg active:bg-primary-700"
         >
-          <Text className="text-white text-2xl font-bold">+</Text>
+          <Text className="text-white text-2xl leading-7">+</Text>
+          <Text className="text-white font-semibold">New folder</Text>
         </Pressable>
       </View>
 
@@ -177,33 +228,32 @@ export default function FolderScreen() {
         visible={showCreate}
         onClose={() => setShowCreate(false)}
         onCreate={async (name) => {
-          const { workspace } = getServices();
-          await workspace.createFolder(name, folderId!);
-          await load();
+          await getServices().workspace.createFolder(name, folderId!);
           setShowCreate(false);
+          notifyLocalChange();
         }}
       />
-      <MoveFolderModal
-        visible={showMove}
-        movingFolderId={folderId!}
-        onClose={() => setShowMove(false)}
-        onMove={async (newParentId) => {
-          const { workspace } = getServices();
-          await workspace.moveFolder(folderId!, newParentId);
-          setShowMove(false);
-          router.back();
-        }}
-      />
+      {folder && (
+        <MoveFolderModal
+          visible={showMove}
+          folder={folder}
+          onClose={() => setShowMove(false)}
+          onMove={async (newParentId) => {
+            await getServices().workspace.moveFolder(folder.id, newParentId);
+            setShowMove(false);
+            notifyLocalChange();
+          }}
+        />
+      )}
       {folder && (
         <RenameFolderModal
           visible={showRename}
           currentName={folder.name}
           onClose={() => setShowRename(false)}
           onRename={async (name) => {
-            const { workspace } = getServices();
-            await workspace.renameFolder(folderId!, name);
-            await load();
+            await getServices().workspace.renameFolder(folder.id, name);
             setShowRename(false);
+            notifyLocalChange();
           }}
         />
       )}

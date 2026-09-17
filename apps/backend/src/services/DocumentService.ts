@@ -1,9 +1,13 @@
 import { Types } from 'mongoose';
 import { Doc, IDocument } from '../models/Document';
 import { Folder } from '../models/Folder';
+import { FolderService } from './FolderService';
 import { uploadFile, deleteFile, buildStorageKey, getPresignedDownloadUrl } from '../config/storage';
+import { logger } from '../utils/logger';
 
 export class DocumentService {
+  private folderService = new FolderService();
+
   async create(params: {
     clientId: string;
     folderId: string;
@@ -20,16 +24,25 @@ export class DocumentService {
     const existing = await Doc.findOne({ ownerId: ownerOid, clientId: params.clientId });
     if (existing) return existing;
 
-    // Verify folder ownership
-    const folder = await Folder.findOne({ _id: params.folderId, ownerId: ownerOid, deletedAt: null });
+    if (!Types.ObjectId.isValid(params.folderId)) {
+      throw Object.assign(new Error('Folder not found.'), { code: 'FOLDER_NOT_FOUND' });
+    }
+
+    const folder = await Folder.findOne({ _id: params.folderId, ownerId: ownerOid });
     if (!folder) throw Object.assign(new Error('Folder not found.'), { code: 'FOLDER_NOT_FOUND' });
+
+    // Conflict resolution Case B1: target folder was deleted on another device,
+    // so the document is preserved in lost-and-found instead of being rejected.
+    const targetFolder = folder.deletedAt
+      ? await this.folderService.getOrCreateLostAndFound(params.ownerId)
+      : folder;
 
     const storageKey = buildStorageKey(params.ownerId, params.clientId, params.name);
     await uploadFile({ key: storageKey, body: params.fileBuffer, contentType: params.mimeType });
 
     return Doc.create({
       clientId:    params.clientId,
-      folderId:    folder._id,
+      folderId:    targetFolder._id,
       ownerId:     ownerOid,
       name:        params.name,
       mimeType:    params.mimeType,
@@ -43,9 +56,15 @@ export class DocumentService {
     const doc = await Doc.findOne({ _id: serverId, ownerId, deletedAt: null });
     if (!doc) return; // already deleted — idempotent
 
-    await deleteFile(doc.storageKey);
     doc.deletedAt = new Date();
     await doc.save();
+
+    // Storage cleanup is best-effort: a storage hiccup must not block the delete.
+    try {
+      await deleteFile(doc.storageKey);
+    } catch (err) {
+      logger.warn('Failed to delete stored file', { storageKey: doc.storageKey, err });
+    }
   }
 
   async findById(serverId: string, ownerId: string): Promise<IDocument | null> {
