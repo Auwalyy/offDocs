@@ -39,9 +39,22 @@ export function toApiError(status: number, rawBody: string): ApiError {
 class ApiClient {
   private authService: AuthService | null = null;
   private refreshInFlight: Promise<string | null> | null = null;
+  private sessionExpiredHandler: (() => void) | null = null;
 
   setAuthService(service: AuthService): void {
     this.authService = service;
+  }
+
+  /**
+   * Called when the server definitively rejects the session (refresh token
+   * invalid, account gone). Network failures never trigger it.
+   */
+  setSessionExpiredHandler(handler: (() => void) | null): void {
+    this.sessionExpiredHandler = handler;
+  }
+
+  private notifySessionExpired(): void {
+    this.sessionExpiredHandler?.();
   }
 
   /** Returns a non-expired access token, refreshing it first when needed. */
@@ -68,13 +81,21 @@ class ApiClient {
 
   private async doRefresh(): Promise<string | null> {
     const tokens = await this.authService?.getStoredTokens();
-    if (!tokens) return null;
+    if (!tokens) {
+      this.notifySessionExpired();
+      return null;
+    }
     try {
       const res = await this.fetchWithTimeout(`${API_BASE_URL}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: tokens.refreshToken }),
       });
+      if (res.status === 401) {
+        // The server no longer accepts this session — only signing in again helps.
+        this.notifySessionExpired();
+        return null;
+      }
       if (!res.ok) return null;
       const json = (await res.json()) as ApiResponse<{
         accessToken: string;
@@ -136,6 +157,13 @@ class ApiClient {
     if (res.status === 401 && token) {
       token = await this.refreshAccessToken();
       if (token) res = await send(token);
+    } else if (res.status === 401 && !path.startsWith('/auth/')) {
+      // A protected call with no stored session at all.
+      this.notifySessionExpired();
+    }
+
+    if (res.status === 401 && !path.startsWith('/auth/')) {
+      throw new ApiError('Your session has expired. Please sign in again.', 401, 'SESSION_EXPIRED');
     }
 
     const raw = await res.text();

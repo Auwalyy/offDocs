@@ -9,6 +9,18 @@ import { config } from './config';
 
 const app = express();
 
+// Log every API call (method, path, status, duration) so sync problems are visible in the server terminal.
+app.use((req, res, next) => {
+  const started = Date.now();
+  res.on('finish', () => {
+    const line = `${req.method} ${req.originalUrl} → ${res.statusCode} (${Date.now() - started} ms)`;
+    if (res.statusCode >= 500) logger.error(line);
+    else if (res.statusCode >= 400) logger.warn(line);
+    else if (config.NODE_ENV !== 'test') logger.info(line);
+  });
+  next();
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 

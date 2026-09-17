@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import { User } from '../types';
 import { getServices } from '../lib/ServiceRegistry';
 import { connectivityMonitor } from '../lib/ConnectivityMonitor';
@@ -54,6 +54,7 @@ export function AppProvider({ children, initialUser }: AppProviderProps) {
   const userRef     = useRef(user);
   const onlineRef   = useRef(isOnline);
   const syncingRef  = useRef(false);
+  const sessionExpiredShownRef = useRef(false);
   userRef.current   = user;
   onlineRef.current = isOnline;
 
@@ -133,8 +134,36 @@ export function AppProvider({ children, initialUser }: AppProviderProps) {
       createdAt: now,
       updatedAt: now,
     };
-    await getServices().auth.saveSession(signedIn, tokens);
+    const services = getServices();
+    await services.auth.saveSession(signedIn, tokens);
+    // Items that failed while signed out (e.g. with an expired session) get a fresh start.
+    await services.syncQueue.retryFailed();
+    sessionExpiredShownRef.current = false;
     setUser(signedIn);
+  }, []);
+
+  // The server rejected the session for good: sign out, keep local work, explain why.
+  useEffect(() => {
+    apiClient.setSessionExpiredHandler(() => {
+      if (!userRef.current || sessionExpiredShownRef.current) return;
+      sessionExpiredShownRef.current = true;
+      void (async () => {
+        try {
+          await getServices().auth.clearSession({ expired: true });
+        } catch {
+          // ignore
+        }
+        setUser(null);
+        setFailedSyncCount(0);
+        Alert.alert(
+          'Please sign in again',
+          'Your session has expired or your account was not found on the server. ' +
+            'Your folders and documents are still on this device and will upload after you sign in ' +
+            '(or create a new account).'
+        );
+      })();
+    });
+    return () => apiClient.setSessionExpiredHandler(null);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
