@@ -10,16 +10,3 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   await _db.execAsync('PRAGMA foreign_keys = ON;');
   return _db;
 }
-
-/**
- * Deletes the local database file and reopens a fresh one.
- * Used as a recovery mechanism when the schema is irrecoverably corrupt.
- */
-export async function resetDatabase(): Promise<SQLite.SQLiteDatabase> {
-  if (_db) {
-    await _db.closeAsync();
-    _db = null;
-  }
-  await SQLite.deleteDatabaseAsync(DB_NAME);
-  return getDatabase();
-}

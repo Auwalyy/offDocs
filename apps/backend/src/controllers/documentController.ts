@@ -3,6 +3,7 @@ import { DocumentService } from '../services/DocumentService';
 import { AuthRequest } from '../middleware/authenticate';
 import { createDocumentSchema } from '../validators';
 import { localPathForKey, usesLocalStorage } from '../config/storage';
+import { contentMatchesMimeType } from '../middleware/upload';
 
 const documentService = new DocumentService();
 
@@ -12,6 +13,10 @@ export async function createDocument(req: Request, res: Response): Promise<void>
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: { code: 'NO_FILE', message: 'File is required.' } });
+      return;
+    }
+    if (!contentMatchesMimeType(file.buffer, file.mimetype)) {
+      res.status(415).json({ error: { code: 'CONTENT_TYPE_MISMATCH', message: 'File content does not match its declared type.' } });
       return;
     }
 

@@ -110,3 +110,35 @@ describe('ApiError', () => {
     expect(new ApiError('offline', 0).isPermanent).toBe(false);
   });
 });
+
+describe('SyncEngine — deleted while uploading', () => {
+  type Check = (entityType: 'folder' | 'document', clientId: string) => Promise<void>;
+
+  function engineWithLocalRow(row: { id: string } | null) {
+    const inserted: SyncQueueItem[] = [];
+    const db = { getFirstAsync: jest.fn().mockResolvedValue(row) };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const engine = new SyncEngine(db as any);
+    (engine as unknown as { queueRepo: { insert: (i: SyncQueueItem) => Promise<void> } }).queueRepo = {
+      insert: async (i) => { inserted.push(i); },
+    };
+    const check = (engine as unknown as { deleteOnServerIfRemovedLocally: Check })
+      .deleteOnServerIfRemovedLocally.bind(engine);
+    return { check, inserted, db };
+  }
+
+  test('queues a server delete when the entity was deleted locally mid-upload', async () => {
+    const { check, inserted, db } = engineWithLocalRow({ id: 'doc1' });
+    await check('document', 'doc1');
+    expect(db.getFirstAsync.mock.calls[0][1]).toEqual(['doc1', 'doc1', 'document:delete']);
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({ operation: 'document:delete', clientEntityId: 'doc1', status: 'pending' });
+    expect(JSON.parse(inserted[0]!.payload)).toEqual({ clientId: 'doc1' });
+  });
+
+  test('queues nothing when the entity is still live or a delete is already queued', async () => {
+    const { check, inserted } = engineWithLocalRow(null);
+    await check('folder', 'F1');
+    expect(inserted).toHaveLength(0);
+  });
+});

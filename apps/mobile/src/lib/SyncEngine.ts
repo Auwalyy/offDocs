@@ -1,7 +1,8 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { SQLiteDatabase } from 'expo-sqlite';
-import { SyncQueueItem } from '../types';
+import { EntityType, SyncOperation, SyncQueueItem } from '../types';
 import { SyncQueueRepository } from '../features/sync/SyncQueueRepository';
+import { makeQueueItem } from '../features/workspace/WorkspaceService';
 import { FolderRepository } from '../features/workspace/FolderRepository';
 import { DocumentRepository } from '../features/documents/DocumentRepository';
 import { apiClient, API_BASE_URL, ApiError, toApiError } from '../api/client';
@@ -155,6 +156,27 @@ export class SyncEngine {
     const { clientId, serverId } = res.data;
     await this.folderRepo.updateServerId(clientId, serverId);
     this.serverIdMap[clientId] = serverId;
+    await this.deleteOnServerIfRemovedLocally('folder', clientId);
+  }
+
+  /**
+   * An entity deleted while its create request was in flight had its queued
+   * operations cancelled, yet the create still reached the server. Queue a
+   * delete so the server copy does not outlive the local one.
+   */
+  private async deleteOnServerIfRemovedLocally(entityType: EntityType, clientId: string): Promise<void> {
+    const table = entityType === 'folder' ? 'folders' : 'documents';
+    const operation: SyncOperation = entityType === 'folder' ? 'folder:delete' : 'document:delete';
+    const row = await this.db.getFirstAsync<{ id: string }>(
+      `SELECT id FROM ${table}
+        WHERE id = ? AND deleted_at IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM sync_queue
+             WHERE client_entity_id = ? AND operation = ? AND status != 'synced'
+          )`,
+      [clientId, clientId, operation]
+    );
+    if (row) await this.queueRepo.insert(makeQueueItem(entityType, operation, clientId, { clientId }));
   }
 
   private async syncFolderRename(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {
@@ -225,6 +247,7 @@ export class SyncEngine {
     const body = JSON.parse(result.body) as { data: { clientId: string; serverId: string } };
     await this.docRepo.updateServerId(body.data.clientId, body.data.serverId);
     this.serverIdMap[body.data.clientId] = body.data.serverId;
+    await this.deleteOnServerIfRemovedLocally('document', body.data.clientId);
   }
 
   private async syncDocumentDelete(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {

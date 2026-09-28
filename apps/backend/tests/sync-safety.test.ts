@@ -140,3 +140,33 @@ describe('refresh token', () => {
     expect(mockUser.findById).not.toHaveBeenCalled();
   });
 });
+
+describe('upload content validation', () => {
+  const { contentMatchesMimeType } = require('../src/middleware/upload') as typeof import('../src/middleware/upload');
+  const PDF  = 'application/pdf';
+  const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  test('accepts files whose leading bytes match the declared type', () => {
+    expect(contentMatchesMimeType(Buffer.from('%PDF-1.7\n...'), PDF)).toBe(true);
+    expect(contentMatchesMimeType(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14]), DOCX)).toBe(true);
+  });
+
+  test('rejects mismatched, truncated and unknown content', () => {
+    expect(contentMatchesMimeType(Buffer.from('MZ\x90\x00 not a pdf'), PDF)).toBe(false);
+    expect(contentMatchesMimeType(Buffer.from('%PDF-1.7'), DOCX)).toBe(false);
+    expect(contentMatchesMimeType(Buffer.from('%PD'), PDF)).toBe(false);
+    expect(contentMatchesMimeType(Buffer.from('%PDF-1.7'), 'text/plain')).toBe(false);
+  });
+
+  test('a file labelled PDF that is not a PDF is refused with 415', async () => {
+    const res = await request(app)
+      .post('/api/v1/documents')
+      .set(auth)
+      .field('clientId', CLIENT_ID)
+      .field('folderId', USER_ID)
+      .field('name', 'fake.pdf')
+      .attach('file', Buffer.from('<script>alert(1)</script>'), { filename: 'fake.pdf', contentType: PDF });
+    expect(res.status).toBe(415);
+    expect(res.body.error.code).toBe('CONTENT_TYPE_MISMATCH');
+  });
+});

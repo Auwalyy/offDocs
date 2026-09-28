@@ -44,8 +44,6 @@ export class AuthService {
 
     await this.userRepo.upsert({
       ...user,
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
       tokenExpiresAt: tokens.expiresAt,
       updatedAt: Date.now(),
     });
@@ -67,17 +65,14 @@ export class AuthService {
     };
   }
 
-  async getCurrentUser(): Promise<User | null> {
-    return this.userRepo.getCurrent();
+  /** The signed-in user, or null when SecureStore holds no session. */
+  async getSignedInUser(): Promise<User | null> {
+    const tokens = await this.getStoredTokens();
+    return tokens ? this.userRepo.getCurrent() : null;
   }
 
   async updateTokens(userId: string, tokens: AuthTokens): Promise<void> {
-    await this.userRepo.updateTokens(
-      userId,
-      tokens.accessToken,
-      tokens.refreshToken,
-      tokens.expiresAt
-    );
+    await this.userRepo.updateTokenExpiry(userId, tokens.expiresAt);
     await SecureStore.setItemAsync(SECURE_KEY_ACCESS,  tokens.accessToken);
     await SecureStore.setItemAsync(SECURE_KEY_REFRESH, tokens.refreshToken);
   }
@@ -85,7 +80,7 @@ export class AuthService {
   /** @param options.expired true when the server rejected the session rather than the user signing out. */
   async clearSession(options: { expired?: boolean } = {}): Promise<void> {
     const user = await this.userRepo.getCurrent();
-    if (user) await this.userRepo.clearTokens(user.id);
+    if (user) await this.userRepo.clearTokenExpiry(user.id);
     await SecureStore.deleteItemAsync(SECURE_KEY_ACCESS);
     await SecureStore.deleteItemAsync(SECURE_KEY_REFRESH);
     await SecureStore.deleteItemAsync(SECURE_KEY_USER_ID);

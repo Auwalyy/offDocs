@@ -10,7 +10,7 @@ import {
   Inter_600SemiBold,
   Inter_700Bold,
 } from '@expo-google-fonts/inter';
-import { getDatabase, resetDatabase } from '../src/database/database';
+import { getDatabase } from '../src/database/database';
 import { runMigrations } from '../src/database/schema';
 import { initServices } from '../src/lib/ServiceRegistry';
 import { connectivityMonitor } from '../src/lib/ConnectivityMonitor';
@@ -49,22 +49,21 @@ async function initApp(): Promise<User | null> {
     Inter_700Bold,
   });
 
-  let db = await getDatabase();
+  const db = await getDatabase();
 
-  // Try migrations — if they fail due to stale schema, reset and retry once
+  // Never wipe the database on a failed migration: it may hold offline work
+  // that has not synced yet. Surface the error instead.
   try {
     await runMigrations(db);
   } catch (migrationError) {
-    console.warn('Migration failed, resetting database:', migrationError);
-    db = await resetDatabase();
-    await runMigrations(db);
+    const detail = migrationError instanceof Error ? migrationError.message : String(migrationError);
+    throw new Error(`Could not update the local database. Your data has not been changed.\n${detail}`);
   }
 
   const services = initServices(db);
   await connectivityMonitor.initialize();
 
-  const storedUser = await services.auth.getCurrentUser();
-  return storedUser?.accessToken ? storedUser : null;
+  return services.auth.getSignedInUser();
 }
 
 export default function RootLayout() {

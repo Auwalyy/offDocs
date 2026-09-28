@@ -43,6 +43,12 @@ const MIGRATIONS: Migration[] = [
     name: '002_add_next_retry_at',
     run: (db) => addColumnIfMissing(db, 'sync_queue', 'next_retry_at', 'INTEGER'),
   },
+  {
+    // Tokens belong in SecureStore only; remove copies that older builds wrote here.
+    version: 3,
+    name: '003_scrub_tokens_from_users',
+    run: sql('UPDATE users SET access_token = NULL, refresh_token = NULL;'),
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {
