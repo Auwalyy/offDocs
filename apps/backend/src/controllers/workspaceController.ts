@@ -22,6 +22,9 @@ export async function getWorkspaceSnapshot(req: Request, res: Response): Promise
         clientId: f.clientId,
         name: f.name,
         parentId: f.parentId?.toString() ?? null,
+        color: f.color,
+        icon: f.icon,
+        isFavorite: f.isFavorite,
         updatedAt: f.updatedAt,
       })),
       documents: documents.map((d) => ({
@@ -31,6 +34,8 @@ export async function getWorkspaceSnapshot(req: Request, res: Response): Promise
         folderId: d.folderId.toString(),
         mimeType: d.mimeType,
         fileSize: d.fileSize,
+        isFavorite: d.isFavorite,
+        tags: d.tags,
         updatedAt: d.updatedAt,
       })),
     },

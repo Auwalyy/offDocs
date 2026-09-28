@@ -7,6 +7,9 @@ export interface IFolder extends Document {
   ownerId: Types.ObjectId;
   name: string;
   path: string;
+  color: string | null;
+  icon: string | null;
+  isFavorite: boolean;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -19,6 +22,9 @@ const folderSchema = new Schema<IFolder>(
     ownerId:   { type: Schema.Types.ObjectId, ref: 'User', required: true },
     name:      { type: String, required: true, trim: true },
     path:      { type: String, default: '' },
+    color:     { type: String, default: null },
+    icon:      { type: String, default: null },
+    isFavorite: { type: Boolean, default: false },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true }

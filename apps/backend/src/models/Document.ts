@@ -10,6 +10,8 @@ export interface IDocument extends MongoDocument {
   storageKey: string;
   fileSize: number;
   contentHash: string | null;
+  isFavorite: boolean;
+  tags: string[];
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -25,6 +27,8 @@ const documentSchema = new Schema<IDocument>(
     storageKey:  { type: String, required: true },
     fileSize:    { type: Number, required: true },
     contentHash: { type: String, default: null },
+    isFavorite:  { type: Boolean, default: false },
+    tags:        { type: [String], default: [] },
     deletedAt:   { type: Date, default: null },
   },
   { timestamps: true }

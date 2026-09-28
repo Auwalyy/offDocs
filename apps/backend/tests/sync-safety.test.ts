@@ -170,3 +170,40 @@ describe('upload content validation', () => {
     expect(res.body.error.code).toBe('CONTENT_TYPE_MISMATCH');
   });
 });
+
+describe('organization fields', () => {
+  test('folder style and favorite are passed through to the service', async () => {
+    mockFolderService.update.mockResolvedValue({
+      _id: { toString: () => 'srv1' }, name: 'A', parentId: null, color: '#2563EB', icon: '📚', isFavorite: true,
+    });
+    const res = await request(app)
+      .patch(`/api/v1/folders/${USER_ID}`)
+      .set(auth)
+      .send({ color: '#2563EB', icon: '📚', isFavorite: true });
+    expect(res.status).toBe(200);
+    expect(mockFolderService.update).toHaveBeenCalledWith(
+      expect.objectContaining({ color: '#2563EB', icon: '📚', isFavorite: true })
+    );
+    expect(res.body.data).toMatchObject({ color: '#2563EB', icon: '📚', isFavorite: true });
+  });
+
+  test('invalid folder colour is rejected before reaching the service', async () => {
+    const res = await request(app).patch(`/api/v1/folders/${USER_ID}`).set(auth).send({ color: 'red' });
+    expect(res.status).toBe(400);
+    expect(mockFolderService.update).not.toHaveBeenCalled();
+  });
+
+  test('document update needs at least one field and caps the tag list', async () => {
+    const empty = await request(app).patch(`/api/v1/documents/${USER_ID}`).set(auth).send({});
+    expect(empty.status).toBe(400);
+
+    const tooMany = Array.from({ length: 21 }, (_, i) => `tag${i}`);
+    const res = await request(app).patch(`/api/v1/documents/${USER_ID}`).set(auth).send({ tags: tooMany });
+    expect(res.status).toBe(400);
+  });
+
+  test('tags are de-duplicated case-insensitively, keeping the first spelling', () => {
+    const { dedupeTags } = require('../src/services/DocumentService') as typeof import('../src/services/DocumentService');
+    expect(dedupeTags(['Exam', ' exam ', 'CSC 401', '', 'csc 401', 'Lecture'])).toEqual(['Exam', 'CSC 401', 'Lecture']);
+  });
+});

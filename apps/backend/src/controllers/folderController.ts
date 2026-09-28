@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { FolderService } from '../services/FolderService';
 import { AuthRequest } from '../middleware/authenticate';
+import { UpdateFolderInput } from '../validators';
 
 const folderService = new FolderService();
 
@@ -31,13 +32,16 @@ export async function updateFolder(req: Request, res: Response): Promise<void> {
   try {
     const userId = (req as AuthRequest).userId;
     const { serverId } = req.params as { serverId: string };
-    const { name, parentId } = req.body as { name?: string; parentId?: string | null };
-    const folder = await folderService.update({ serverId, ownerId: userId, name, parentId });
+    const { name, parentId, color, icon, isFavorite } = req.body as UpdateFolderInput;
+    const folder = await folderService.update({ serverId, ownerId: userId, name, parentId, color, icon, isFavorite });
     res.json({
       data: {
         serverId: folder._id.toString(),
         name: folder.name,
         parentId: folder.parentId?.toString() ?? null,
+        color: folder.color,
+        icon: folder.icon,
+        isFavorite: folder.isFavorite,
       },
     });
   } catch (err) {

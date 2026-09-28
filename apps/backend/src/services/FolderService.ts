@@ -43,6 +43,9 @@ export class FolderService {
     ownerId: string;
     name?: string;
     parentId?: string | null;
+    color?: string | null;
+    icon?: string | null;
+    isFavorite?: boolean;
   }): Promise<IFolder> {
     const folder = await Folder.findOne({
       _id: params.serverId,
@@ -52,6 +55,9 @@ export class FolderService {
     if (!folder) throw notFound();
 
     if (params.name !== undefined) folder.name = params.name;
+    if (params.color !== undefined) folder.color = params.color;
+    if (params.icon !== undefined) folder.icon = params.icon;
+    if (params.isFavorite !== undefined) folder.isFavorite = params.isFavorite;
     if (params.parentId !== undefined) {
       if (params.parentId === null) {
         folder.parentId = null;

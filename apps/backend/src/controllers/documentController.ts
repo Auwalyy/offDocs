@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { DocumentService } from '../services/DocumentService';
 import { AuthRequest } from '../middleware/authenticate';
-import { createDocumentSchema } from '../validators';
+import { createDocumentSchema, UpdateDocumentInput } from '../validators';
 import { localPathForKey, usesLocalStorage } from '../config/storage';
 import { contentMatchesMimeType } from '../middleware/upload';
 
@@ -52,6 +52,23 @@ export async function createDocument(req: Request, res: Response): Promise<void>
       res.status(404).json({ error: { code: 'FOLDER_NOT_FOUND', message: e.message } });
     } else {
       res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Failed to upload document.' } });
+    }
+  }
+}
+
+export async function updateDocument(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = (req as AuthRequest).userId;
+    const { serverId } = req.params as { serverId: string };
+    const { isFavorite, tags } = req.body as UpdateDocumentInput;
+    const doc = await documentService.update({ serverId, ownerId: userId, isFavorite, tags });
+    res.json({ data: { serverId: doc._id.toString(), isFavorite: doc.isFavorite, tags: doc.tags } });
+  } catch (err) {
+    const e = err as Error & { code?: string };
+    if (e.code === 'DOCUMENT_NOT_FOUND') {
+      res.status(404).json({ error: { code: 'DOCUMENT_NOT_FOUND', message: e.message } });
+    } else {
+      res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Failed to update document.' } });
     }
   }
 }

@@ -6,7 +6,7 @@ import { idempotency } from '../middleware/idempotency';
 import { upload } from '../middleware/upload';
 import {
   registerSchema, loginSchema, refreshSchema,
-  createFolderSchema, updateFolderSchema,
+  createFolderSchema, updateFolderSchema, updateDocumentSchema,
   syncBatchSchema,
 } from '../validators';
 import * as auth     from '../controllers/authController';
@@ -44,6 +44,7 @@ router.delete('/folders/:serverId', authenticate, idempotency, folders.deleteFol
 router.post(  '/documents',                    authenticate, idempotency, upload.single('file'), docs.createDocument);
 router.get(   '/documents/:serverId/download', authenticate, docs.getDocumentDownloadUrl);
 router.get(   '/documents/:serverId/file',     authenticate, docs.getDocumentFile);
+router.patch( '/documents/:serverId',          authenticate, idempotency, validate(updateDocumentSchema), docs.updateDocument);
 router.delete('/documents/:serverId',          authenticate, idempotency, docs.deleteDocument);
 
 // ─── Sync batch ───────────────────────────────────────────────────────────────

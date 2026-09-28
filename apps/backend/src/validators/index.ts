@@ -25,11 +25,18 @@ export const createFolderSchema = z.object({
   parentId: z.string().nullable().optional(),
 });
 
+/** Folder colours are stored as #RRGGBB; icons are a short emoji chosen on the device. */
+const folderColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Color must be #RRGGBB').nullable();
+const folderIcon  = z.string().min(1).max(16).nullable();
+
 export const updateFolderSchema = z.object({
-  name:     z.string().min(1).max(255).trim().optional(),
-  parentId: z.string().nullable().optional(),
-}).refine((d) => d.name !== undefined || d.parentId !== undefined, {
-  message: 'At least one of name or parentId must be provided',
+  name:       z.string().min(1).max(255).trim().optional(),
+  parentId:   z.string().nullable().optional(),
+  color:      folderColor.optional(),
+  icon:       folderIcon.optional(),
+  isFavorite: z.boolean().optional(),
+}).refine((d) => Object.values(d).some((v) => v !== undefined), {
+  message: 'At least one field must be provided',
 });
 
 // ─── Documents ────────────────────────────────────────────────────────────────
@@ -44,6 +51,16 @@ export const createDocumentSchema = z.object({
   ]),
   fileSize:    z.coerce.number().int().positive(),
   contentHash: z.string().optional(),
+});
+
+export const MAX_TAGS_PER_DOCUMENT = 20;
+
+/** Tags are replaced as a whole list, so retries and out-of-order devices converge. */
+export const updateDocumentSchema = z.object({
+  isFavorite: z.boolean().optional(),
+  tags: z.array(z.string().trim().min(1).max(40)).max(MAX_TAGS_PER_DOCUMENT).optional(),
+}).refine((d) => d.isFavorite !== undefined || d.tags !== undefined, {
+  message: 'At least one of isFavorite or tags must be provided',
 });
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────
@@ -90,4 +107,5 @@ export type RefreshInput        = z.infer<typeof refreshSchema>;
 export type CreateFolderInput   = z.infer<typeof createFolderSchema>;
 export type UpdateFolderInput   = z.infer<typeof updateFolderSchema>;
 export type CreateDocumentInput = z.infer<typeof createDocumentSchema>;
+export type UpdateDocumentInput = z.infer<typeof updateDocumentSchema>;
 export type SyncBatchInput      = z.infer<typeof syncBatchSchema>;

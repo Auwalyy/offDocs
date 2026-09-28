@@ -5,6 +5,21 @@ import { FolderService } from './FolderService';
 import { uploadFile, deleteFile, buildStorageKey, getPresignedDownloadUrl, usesLocalStorage } from '../config/storage';
 import { logger } from '../utils/logger';
 
+/** Case-insensitive de-duplication that keeps the first spelling seen. */
+export function dedupeTags(tags: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of tags) {
+    const tag = raw.trim();
+    const key = tag.toLowerCase();
+    if (tag && !seen.has(key)) {
+      seen.add(key);
+      result.push(tag);
+    }
+  }
+  return result;
+}
+
 export class DocumentService {
   private folderService = new FolderService();
 
@@ -50,6 +65,19 @@ export class DocumentService {
       fileSize:    params.fileSize,
       contentHash: params.contentHash ?? null,
     });
+  }
+
+  async update(params: {
+    serverId: string;
+    ownerId: string;
+    isFavorite?: boolean;
+    tags?: string[];
+  }): Promise<IDocument> {
+    const doc = await Doc.findOne({ _id: params.serverId, ownerId: params.ownerId, deletedAt: null });
+    if (!doc) throw Object.assign(new Error('Document not found.'), { code: 'DOCUMENT_NOT_FOUND' });
+    if (params.isFavorite !== undefined) doc.isFavorite = params.isFavorite;
+    if (params.tags !== undefined) doc.tags = dedupeTags(params.tags);
+    return doc.save();
   }
 
   async softDelete(serverId: string, ownerId: string): Promise<void> {
