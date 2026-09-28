@@ -10,7 +10,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://10.141.241.64:3000/api/v1"
+        "EXPO_PUBLIC_API_URL": "http://172.20.10.5:3000/api/v1"
       }
     },
     "production": {
