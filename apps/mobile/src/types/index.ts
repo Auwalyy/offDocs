@@ -13,7 +13,13 @@ export type SyncOperation =
   | 'folder:move'
   | 'folder:delete'
   | 'document:create'
-  | 'document:delete';
+  | 'document:delete'
+  /** Sets isFavorite on a folder or document (entityType says which). */
+  | 'favorite:update'
+  /** Replaces a document's whole tag list. */
+  | 'tag:update'
+  /** Sets a folder's colour and icon. */
+  | 'folder:style';
 
 export type EntityType = 'folder' | 'document';
 
@@ -38,6 +44,11 @@ export interface Folder {
   parentId: string | null;
   name: string;
   pathCache: string | null;
+  /** #RRGGBB, or null for the default colour. */
+  color: string | null;
+  /** Emoji shown instead of the default folder icon. */
+  icon: string | null;
+  isFavorite: boolean;
   syncStatus: SyncStatus;
   createdAt: number;
   updatedAt: number;
@@ -58,8 +69,46 @@ export interface Document {
   contentHash: string | null;
   importedAt: number;
   updatedAt: number;
+  isFavorite: boolean;
   syncStatus: SyncStatus;
   deletedAt: number | null;
+}
+
+// ─── Organization ─────────────────────────────────────────────────────────────
+
+export type RecentAction = 'opened' | 'imported' | 'modified';
+
+export interface RecentItem {
+  entityType: EntityType;
+  entityId: string;
+  action: RecentAction;
+  occurredAt: number;
+  name: string;
+  /** Documents only. */
+  mimeType: string | null;
+  fileSize: number | null;
+  updatedAt: number;
+  /** Name of the containing folder, or null at the workspace root. */
+  locationName: string | null;
+  color: string | null;
+  icon: string | null;
+}
+
+export interface DocumentHit extends Document {
+  tags: string[];
+  folderName: string | null;
+}
+
+export type SearchFilter = 'all' | 'folders' | 'documents' | 'favorites' | 'recent';
+
+export interface SearchResults {
+  folders: Folder[];
+  documents: DocumentHit[];
+}
+
+export interface TagSummary {
+  name: string;
+  documentCount: number;
 }
 
 // ─── Sync Queue ───────────────────────────────────────────────────────────────

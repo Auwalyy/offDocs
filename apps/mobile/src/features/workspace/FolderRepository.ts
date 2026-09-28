@@ -7,6 +7,9 @@ interface FolderRow {
   parent_id: string | null;
   name: string;
   path_cache: string | null;
+  color?: string | null;
+  icon?: string | null;
+  is_favorite?: number;
   sync_status: string;
   created_at: number;
   updated_at: number;
@@ -20,6 +23,9 @@ function rowToFolder(row: FolderRow): Folder {
     parentId: row.parent_id,
     name: row.name,
     pathCache: row.path_cache,
+    color: row.color ?? null,
+    icon: row.icon ?? null,
+    isFavorite: row.is_favorite === 1,
     syncStatus: row.sync_status as SyncStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -109,6 +115,43 @@ export class FolderRepository {
       'UPDATE folders SET deleted_at = ?, sync_status = ? WHERE id = ?',
       [deletedAt, 'pending' satisfies SyncStatus, id]
     );
+  }
+
+  async setFavorite(id: string, isFavorite: boolean, updatedAt: number): Promise<void> {
+    await this.db.runAsync(
+      'UPDATE folders SET is_favorite = ?, sync_status = ?, updated_at = ? WHERE id = ?',
+      [isFavorite ? 1 : 0, 'pending' satisfies SyncStatus, updatedAt, id]
+    );
+  }
+
+  async setStyle(id: string, color: string | null, icon: string | null, updatedAt: number): Promise<void> {
+    await this.db.runAsync(
+      'UPDATE folders SET color = ?, icon = ?, sync_status = ?, updated_at = ? WHERE id = ?',
+      [color, icon, 'pending' satisfies SyncStatus, updatedAt, id]
+    );
+  }
+
+  async findFavorites(): Promise<Folder[]> {
+    const rows = await this.db.getAllAsync<FolderRow>(
+      'SELECT * FROM folders WHERE is_favorite = 1 AND deleted_at IS NULL ORDER BY name COLLATE NOCASE ASC'
+    );
+    return rows.map(rowToFolder);
+  }
+
+  /** The folder and its ancestors, ordered from the workspace root down to the folder. */
+  async findPath(id: string): Promise<Folder[]> {
+    const rows = await this.db.getAllAsync<FolderRow & { depth: number }>(
+      `WITH RECURSIVE ancestors(id, parent_id, depth) AS (
+         SELECT id, parent_id, 0 FROM folders WHERE id = ?
+         UNION ALL
+         SELECT f.id, f.parent_id, a.depth + 1 FROM folders f JOIN ancestors a ON f.id = a.parent_id
+         WHERE a.depth < 64
+       )
+       SELECT folders.*, ancestors.depth FROM folders JOIN ancestors ON folders.id = ancestors.id
+       ORDER BY ancestors.depth DESC`,
+      [id]
+    );
+    return rows.map(rowToFolder);
   }
 
   async updateServerId(clientId: string, serverId: string): Promise<void> {

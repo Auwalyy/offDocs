@@ -1,50 +1,83 @@
-import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import { Text, SyncBadge, ScreenHeader, HeaderAction } from '../../../src/design-system';
 import { Document, Folder } from '../../../src/types';
 import { getServices } from '../../../src/lib/ServiceRegistry';
 import { useApp } from '../../../src/hooks/useApp';
 import { useReloadOnChange } from '../../../src/hooks/useReloadOnChange';
+import { useWorkspacePrefs } from '../../../src/hooks/useWorkspacePrefs';
+import { useItemActions } from '../../../src/hooks/useItemActions';
 import { FolderRow } from '../../../src/components/FolderRow';
 import { DocumentRow } from '../../../src/components/DocumentRow';
 import { CreateFolderModal } from '../../../src/components/CreateFolderModal';
-import { RenameFolderModal } from '../../../src/components/RenameFolderModal';
-import { MoveFolderModal } from '../../../src/components/MoveFolderModal';
+import { Breadcrumbs } from '../../../src/components/Breadcrumbs';
+import { WorkspaceToolbar } from '../../../src/components/WorkspaceToolbar';
+import { ItemGrid } from '../../../src/components/ItemGrid';
+import { StarButton } from '../../../src/components/StarButton';
 import { SUPPORTED_MIME_TYPES } from '../../../src/features/documents/DocumentService';
-import { confirmDelete, showError } from '../../../src/lib/alerts';
+import { sortDocuments, sortFolders } from '../../../src/lib/sort';
+import { showError } from '../../../src/lib/alerts';
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
 
 export default function FolderScreen() {
   const { folderId } = useLocalSearchParams<{ folderId: string }>();
   const router = useRouter();
   const { isOnline, isSyncing, failedSyncCount, triggerSync, notifyLocalChange } = useApp();
+  const { sort, setSort, view, setView } = useWorkspacePrefs();
+  const actions = useItemActions({
+    onDeleted: (target) => {
+      // Leave the screen of a folder that no longer exists.
+      if (target.kind === 'folder' && target.folder.id === folderId) router.back();
+    },
+  });
 
-  const [folder, setFolder]         = useState<Folder | null>(null);
+  const [path, setPath]             = useState<Folder[]>([]);
   const [subFolders, setSubFolders] = useState<Folder[]>([]);
   const [documents, setDocuments]   = useState<Document[]>([]);
+  const [tagsByDoc, setTagsByDoc]   = useState<Record<string, string[]>>({});
   const [loaded, setLoaded]         = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [importing, setImporting]   = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  const [showRename, setShowRename] = useState(false);
-  const [showMove, setShowMove]     = useState(false);
+
+  const folder = path.length ? path[path.length - 1]! : null;
 
   const load = useCallback(async () => {
     if (!folderId) return;
-    const { workspace, documents: docSvc } = getServices();
-    const [f, subs, docs] = await Promise.all([
-      workspace.getFolder(folderId),
+    const { workspace, documents: docSvc, organization } = getServices();
+    const [p, subs, docs] = await Promise.all([
+      organization.getFolderPath(folderId),
       workspace.getFolders(folderId),
       docSvc.getDocuments(folderId),
     ]);
-    setFolder(f);
+    // A deleted folder has no live row, so its path ends somewhere else.
+    const current = p[p.length - 1];
+    setPath(current?.id === folderId && current.deletedAt === null ? p : []);
     setSubFolders(subs);
     setDocuments(docs);
+    setTagsByDoc(await organization.getTagsForDocuments(docs.map((d) => d.id)));
     setLoaded(true);
   }, [folderId]);
 
   useReloadOnChange(load);
+
+  // Count a visit once per time the screen is shown, not on every data reload.
+  useFocusEffect(
+    useCallback(() => {
+      if (!folderId) return;
+      getServices().recent.record('folder', folderId, 'opened')
+        .catch((err: unknown) => console.warn('Could not record recent folder:', err));
+    }, [folderId])
+  );
+
+  const sortedFolders = useMemo(() => sortFolders(subFolders, sort), [subFolders, sort]);
+  const sortedDocs    = useMemo(() => sortDocuments(documents, sort), [documents, sort]);
+  const columns = view === 'grid' ? 2 : 1;
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -88,43 +121,9 @@ export default function FolderScreen() {
     }
   }
 
-  function handleDeleteFolder(target: Folder) {
-    confirmDelete('Delete folder', `Delete “${target.name}” and everything inside it?`, async () => {
-      try {
-        await getServices().workspace.deleteFolder(target.id);
-        if (target.id === folderId) router.back();
-        notifyLocalChange();
-      } catch (e) {
-        showError('Could not delete folder', e);
-      }
-    });
-  }
-
-  function openFolderMenu(target: Folder) {
-    // Android alerts show at most three buttons, so Cancel is only added on iOS
-    // (Android dismisses on outside tap).
-    Alert.alert(
-      target.name,
-      undefined,
-      [
-        { text: 'Rename', onPress: () => setShowRename(true) },
-        { text: 'Move', onPress: () => setShowMove(true) },
-        { text: 'Delete', style: 'destructive', onPress: () => handleDeleteFolder(target) },
-        ...(Platform.OS === 'ios' ? [{ text: 'Cancel', style: 'cancel' as const }] : []),
-      ],
-      { cancelable: true }
-    );
-  }
-
-  function handleDeleteDocument(doc: Document) {
-    confirmDelete('Delete document', `Remove “${doc.name}”?`, async () => {
-      try {
-        await getServices().documents.deleteDocument(doc.id);
-        notifyLocalChange();
-      } catch (e) {
-        showError('Could not delete document', e);
-      }
-    });
+  function navigateToFolder(id: string) {
+    // Go back to that folder's screen if it is already in the stack.
+    router.dismissTo(`/(app)/workspace/${id}`);
   }
 
   if (loaded && !folder) {
@@ -154,45 +153,77 @@ export default function FolderScreen() {
               onPress={() => router.push('/(app)/sync')}
             />
             {folder ? (
-              <HeaderAction label="Edit" onPress={() => openFolderMenu(folder)} accessibilityLabel="Folder options" />
+              <>
+                <StarButton active={folder.isFavorite} name={folder.name} onPress={() => actions.toggleFolderFavorite(folder)} />
+                <HeaderAction label="⋯" onPress={() => actions.openFolderOptions(folder)} accessibilityLabel="Folder options" />
+              </>
             ) : null}
           </>
         }
       />
+      {path.length > 0 ? (
+        <Breadcrumbs path={path} onNavigateRoot={() => router.dismissTo('/(app)/workspace')} onNavigate={navigateToFolder} />
+      ) : null}
 
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 180, gap: 8 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 180, gap: 8 }}
       >
-        {subFolders.length > 0 && (
+        {!isEmpty && loaded ? (
+          <WorkspaceToolbar
+            sort={sort}
+            onSortChange={setSort}
+            view={view}
+            onViewChange={setView}
+            summary={[
+              subFolders.length ? plural(subFolders.length, 'folder') : null,
+              documents.length ? plural(documents.length, 'document') : null,
+            ].filter(Boolean).join(' · ')}
+          />
+        ) : null}
+
+        {sortedFolders.length > 0 && (
           <>
-            <Text variant="label" className="mt-3 mb-1 text-surface-400 uppercase text-xs tracking-wide">
-              Folders · {subFolders.length}
+            <Text variant="label" className="mt-1 mb-1 text-surface-400 uppercase text-xs tracking-wide">
+              Folders · {sortedFolders.length}
             </Text>
-            {subFolders.map((f) => (
-              <FolderRow
-                key={f.id}
-                folder={f}
-                onPress={() => router.push(`/(app)/workspace/${f.id}`)}
-                onDelete={() => handleDeleteFolder(f)}
-              />
-            ))}
+            <ItemGrid
+              items={sortedFolders}
+              columns={columns}
+              keyOf={(f) => f.id}
+              renderItem={(f) => (
+                <FolderRow
+                  folder={f}
+                  layout={view}
+                  onPress={() => router.push(`/(app)/workspace/${f.id}`)}
+                  onOptions={() => actions.openFolderOptions(f)}
+                  onToggleFavorite={() => actions.toggleFolderFavorite(f)}
+                />
+              )}
+            />
           </>
         )}
 
-        {documents.length > 0 && (
+        {sortedDocs.length > 0 && (
           <>
             <Text variant="label" className="mt-3 mb-1 text-surface-400 uppercase text-xs tracking-wide">
-              Documents · {documents.length}
+              Documents · {sortedDocs.length}
             </Text>
-            {documents.map((d) => (
-              <DocumentRow
-                key={d.id}
-                document={d}
-                onPress={() => router.push(`/(app)/document/${d.id}`)}
-                onDelete={() => handleDeleteDocument(d)}
-              />
-            ))}
+            <ItemGrid
+              items={sortedDocs}
+              columns={columns}
+              keyOf={(d) => d.id}
+              renderItem={(d) => (
+                <DocumentRow
+                  document={d}
+                  layout={view}
+                  tags={tagsByDoc[d.id]}
+                  onPress={() => router.push(`/(app)/document/${d.id}`)}
+                  onOptions={() => actions.openDocumentOptions(d)}
+                  onToggleFavorite={() => actions.toggleDocumentFavorite(d)}
+                />
+              )}
+            />
           </>
         )}
 
@@ -236,30 +267,7 @@ export default function FolderScreen() {
           notifyLocalChange();
         }}
       />
-      {folder && (
-        <MoveFolderModal
-          visible={showMove}
-          folder={folder}
-          onClose={() => setShowMove(false)}
-          onMove={async (newParentId) => {
-            await getServices().workspace.moveFolder(folder.id, newParentId);
-            setShowMove(false);
-            notifyLocalChange();
-          }}
-        />
-      )}
-      {folder && (
-        <RenameFolderModal
-          visible={showRename}
-          currentName={folder.name}
-          onClose={() => setShowRename(false)}
-          onRename={async (name) => {
-            await getServices().workspace.renameFolder(folder.id, name);
-            setShowRename(false);
-            notifyLocalChange();
-          }}
-        />
-      )}
+      {actions.modals}
     </View>
   );
 }

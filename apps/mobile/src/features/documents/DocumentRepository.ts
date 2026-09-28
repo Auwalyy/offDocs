@@ -13,6 +13,7 @@ interface DocumentRow {
   content_hash: string | null;
   imported_at: number;
   updated_at: number;
+  is_favorite?: number;
   sync_status: string;
   deleted_at: number | null;
 }
@@ -30,6 +31,7 @@ function rowToDocument(row: DocumentRow): Document {
     contentHash: row.content_hash,
     importedAt: row.imported_at,
     updatedAt: row.updated_at,
+    isFavorite: row.is_favorite === 1,
     syncStatus: row.sync_status as SyncStatus,
     deletedAt: row.deleted_at,
   };
@@ -100,6 +102,28 @@ export class DocumentRepository {
       'UPDATE documents SET deleted_at = ?, sync_status = ? WHERE id = ?',
       [deletedAt, 'pending' satisfies SyncStatus, id]
     );
+  }
+
+  async setFavorite(id: string, isFavorite: boolean, updatedAt: number): Promise<void> {
+    await this.db.runAsync(
+      'UPDATE documents SET is_favorite = ?, sync_status = ?, updated_at = ? WHERE id = ?',
+      [isFavorite ? 1 : 0, 'pending' satisfies SyncStatus, updatedAt, id]
+    );
+  }
+
+  /** Marks the document modified locally (e.g. its tags changed) and pending sync. */
+  async touch(id: string, updatedAt: number): Promise<void> {
+    await this.db.runAsync(
+      'UPDATE documents SET sync_status = ?, updated_at = ? WHERE id = ?',
+      ['pending' satisfies SyncStatus, updatedAt, id]
+    );
+  }
+
+  async findFavorites(): Promise<Document[]> {
+    const rows = await this.db.getAllAsync<DocumentRow>(
+      'SELECT * FROM documents WHERE is_favorite = 1 AND deleted_at IS NULL ORDER BY name COLLATE NOCASE ASC'
+    );
+    return rows.map(rowToDocument);
   }
 
   async updateServerId(clientId: string, serverId: string): Promise<void> {

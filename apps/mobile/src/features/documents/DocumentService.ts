@@ -6,6 +6,7 @@ import { DocumentRepository } from './DocumentRepository';
 import { SyncQueueRepository } from '../sync/SyncQueueRepository';
 import { makeQueueItem } from '../workspace/WorkspaceService';
 import { withTransaction } from '../../database/transaction';
+import { RecentRepository } from '../recent/RecentRepository';
 
 export const SUPPORTED_MIME_TYPES = [
   'application/pdf',
@@ -61,10 +62,12 @@ async function copyToAppStorage(sourceUri: string, destUri: string): Promise<voi
 export class DocumentService {
   private docRepo: DocumentRepository;
   private queueRepo: SyncQueueRepository;
+  private recentRepo: RecentRepository;
 
   constructor(private db: SQLiteDatabase) {
     this.docRepo = new DocumentRepository(db);
     this.queueRepo = new SyncQueueRepository(db);
+    this.recentRepo = new RecentRepository(db);
   }
 
   async importDocument(params: {
@@ -101,6 +104,7 @@ export class DocumentService {
       contentHash: null,
       importedAt: now,
       updatedAt: now,
+      isFavorite: false,
       syncStatus: 'pending',
       deletedAt: null,
     };
@@ -113,6 +117,7 @@ export class DocumentService {
       await withTransaction(this.db, async () => {
         await this.docRepo.insert(doc);
         await this.queueRepo.insert(queueItem);
+        await this.recentRepo.record('document', id, 'imported', now);
       });
     } catch (err) {
       await FileSystem.deleteAsync(destUri, { idempotent: true }).catch(() => undefined);
@@ -129,6 +134,7 @@ export class DocumentService {
 
     await withTransaction(this.db, async () => {
       await this.docRepo.softDelete(id, now);
+      await this.queueRepo.deleteMetadataUpdatesFor([id]);
       if (doc.serverId) {
         await this.queueRepo.insert(
           makeQueueItem('document', 'document:delete', id, { clientId: id }, now)

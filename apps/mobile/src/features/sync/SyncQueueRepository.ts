@@ -1,5 +1,5 @@
 import { SQLiteDatabase } from 'expo-sqlite';
-import { SyncQueueItem, SyncStatus } from '../../types';
+import { SyncOperation, SyncQueueItem, SyncStatus } from '../../types';
 
 interface QueueRow {
   id: string;
@@ -51,7 +51,7 @@ export class SyncQueueRepository {
       `SELECT * FROM sync_queue
        WHERE status IN ('pending', 'failed')
          AND (next_retry_at IS NULL OR next_retry_at <= ?)
-       ORDER BY created_at ASC`,
+       ORDER BY created_at ASC, rowid ASC`, // rowid = insertion order within the same millisecond
       [now]
     );
     return rows.map(rowToItem);
@@ -59,7 +59,7 @@ export class SyncQueueRepository {
 
   async getAll(): Promise<SyncQueueItem[]> {
     const rows = await this.db.getAllAsync<QueueRow>(
-      'SELECT * FROM sync_queue ORDER BY created_at DESC'
+      'SELECT * FROM sync_queue ORDER BY created_at DESC, rowid DESC'
     );
     return rows.map(rowToItem);
   }
@@ -73,7 +73,7 @@ export class SyncQueueRepository {
          LEFT JOIN documents d ON q.entity_type = 'document' AND d.id = q.client_entity_id
         ORDER BY
           CASE q.status WHEN 'needs_attention' THEN 0 WHEN 'failed' THEN 1 WHEN 'syncing' THEN 2 WHEN 'pending' THEN 3 ELSE 4 END,
-          q.created_at DESC
+          q.created_at DESC, q.rowid DESC
         LIMIT ?`,
       [limit]
     );
@@ -148,6 +148,33 @@ export class SyncQueueRepository {
     const placeholders = clientEntityIds.map(() => '?').join(', ');
     await this.db.runAsync(
       `DELETE FROM sync_queue WHERE status != 'synced' AND client_entity_id IN (${placeholders})`,
+      clientEntityIds
+    );
+  }
+
+  /**
+   * Drops not-yet-sent items of `operation` for an entity. Used when a newer
+   * item carries the full new value, so toggling a star ten times offline
+   * sends one request. Items already in flight ('syncing') are kept.
+   */
+  async deleteSuperseded(clientEntityId: string, operation: SyncOperation): Promise<void> {
+    await this.db.runAsync(
+      `DELETE FROM sync_queue
+        WHERE client_entity_id = ? AND operation = ?
+          AND status IN ('pending', 'failed', 'needs_attention')`,
+      [clientEntityId, operation]
+    );
+  }
+
+  /** Drops unsent favorite/tag/style updates for entities that are being deleted. */
+  async deleteMetadataUpdatesFor(clientEntityIds: string[]): Promise<void> {
+    if (clientEntityIds.length === 0) return;
+    const placeholders = clientEntityIds.map(() => '?').join(', ');
+    await this.db.runAsync(
+      `DELETE FROM sync_queue
+        WHERE operation IN ('favorite:update', 'tag:update', 'folder:style')
+          AND status IN ('pending', 'failed', 'needs_attention')
+          AND client_entity_id IN (${placeholders})`,
       clientEntityIds
     );
   }

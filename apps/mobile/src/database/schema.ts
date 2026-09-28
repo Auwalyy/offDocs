@@ -1,5 +1,6 @@
 import { SQLiteDatabase } from 'expo-sqlite';
 import { migration_001 } from './migrations/001_initial_schema';
+import { migration_004 } from './migrations/004_organization';
 
 type MigrationFn = (db: SQLiteDatabase) => Promise<void>;
 
@@ -48,6 +49,18 @@ const MIGRATIONS: Migration[] = [
     version: 3,
     name: '003_scrub_tokens_from_users',
     run: sql('UPDATE users SET access_token = NULL, refresh_token = NULL;'),
+  },
+  {
+    // Every step is idempotent, so a migration interrupted halfway can simply rerun.
+    version: 4,
+    name: '004_organization',
+    run: async (db) => {
+      await addColumnIfMissing(db, 'folders', 'color', 'TEXT');
+      await addColumnIfMissing(db, 'folders', 'icon', 'TEXT');
+      await addColumnIfMissing(db, 'folders', 'is_favorite', 'INTEGER NOT NULL DEFAULT 0');
+      await addColumnIfMissing(db, 'documents', 'is_favorite', 'INTEGER NOT NULL DEFAULT 0');
+      await db.execAsync(migration_004);
+    },
   },
 ];
 

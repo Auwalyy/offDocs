@@ -133,13 +133,16 @@ export class SyncEngine {
       case 'folder:delete':   return this.syncFolderDelete(item, payload);
       case 'document:create': return this.syncDocumentCreate(item, payload);
       case 'document:delete': return this.syncDocumentDelete(item, payload);
+      case 'favorite:update': return this.syncFavorite(item, payload);
+      case 'tag:update':      return this.syncTags(item, payload);
+      case 'folder:style':    return this.syncFolderStyle(item, payload);
       default:
         throw new Error(`Unknown sync operation: ${String(item.operation)}`);
     }
   }
 
   /** Resolves a client folder id to its server id, or throws if it has not synced yet. */
-  private requireFolderServerId(clientId: string, what: string): string {
+  private requireServerId(clientId: string, what: string): string {
     const serverId = this.serverIdMap[clientId];
     if (!serverId) throw new DependencyNotReadyError(`Waiting for ${what} to sync first`);
     return serverId;
@@ -147,7 +150,7 @@ export class SyncEngine {
 
   private async syncFolderCreate(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {
     const parentClientId = payload['parentId'] as string | null;
-    const parentServerId = parentClientId ? this.requireFolderServerId(parentClientId, 'parent folder') : null;
+    const parentServerId = parentClientId ? this.requireServerId(parentClientId, 'parent folder') : null;
     const res = await apiClient.post<{ data: { clientId: string; serverId: string } }>(
       '/folders',
       { clientId: payload['clientId'], name: payload['name'], parentId: parentServerId },
@@ -181,17 +184,17 @@ export class SyncEngine {
 
   private async syncFolderRename(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {
     const clientId = payload['clientId'] as string;
-    const serverId = this.requireFolderServerId(clientId, 'folder');
+    const serverId = this.requireServerId(clientId, 'folder');
     await apiClient.patch(`/folders/${serverId}`, { name: payload['name'] }, item.id);
     await this.folderRepo.updateSyncStatus(clientId, 'synced');
   }
 
   private async syncFolderMove(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {
     const clientId = payload['clientId'] as string;
-    const serverId = this.requireFolderServerId(clientId, 'folder');
+    const serverId = this.requireServerId(clientId, 'folder');
     const newParentClientId = payload['newParentId'] as string | null;
     const newParentServerId = newParentClientId
-      ? this.requireFolderServerId(newParentClientId, 'destination folder')
+      ? this.requireServerId(newParentClientId, 'destination folder')
       : null;
     await apiClient.patch(`/folders/${serverId}`, { parentId: newParentServerId }, item.id);
     await this.folderRepo.updateSyncStatus(clientId, 'synced');
@@ -204,7 +207,7 @@ export class SyncEngine {
   }
 
   private async syncDocumentCreate(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {
-    const folderServerId = this.requireFolderServerId(payload['folderId'] as string, 'folder');
+    const folderServerId = this.requireServerId(payload['folderId'] as string, 'folder');
     const localUri = payload['localUri'] as string;
     const name     = payload['name'] as string;
     const mimeType = payload['mimeType'] as string;
@@ -248,6 +251,41 @@ export class SyncEngine {
     await this.docRepo.updateServerId(body.data.clientId, body.data.serverId);
     this.serverIdMap[body.data.clientId] = body.data.serverId;
     await this.deleteOnServerIfRemovedLocally('document', body.data.clientId);
+  }
+
+  private entityPath(entityType: EntityType, serverId: string): string {
+    return entityType === 'folder' ? `/folders/${serverId}` : `/documents/${serverId}`;
+  }
+
+  private async markEntitySynced(entityType: EntityType, clientId: string): Promise<void> {
+    if (entityType === 'folder') await this.folderRepo.updateSyncStatus(clientId, 'synced');
+    else await this.docRepo.updateSyncStatus(clientId, 'synced');
+  }
+
+  private async syncFavorite(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {
+    const clientId = payload['clientId'] as string;
+    const serverId = this.requireServerId(clientId, item.entityType);
+    await apiClient.patch(this.entityPath(item.entityType, serverId), { isFavorite: payload['isFavorite'] === true }, item.id);
+    await this.markEntitySynced(item.entityType, clientId);
+  }
+
+  private async syncTags(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {
+    const clientId = payload['clientId'] as string;
+    const serverId = this.requireServerId(clientId, 'document');
+    const tags = Array.isArray(payload['tags']) ? payload['tags'] : [];
+    await apiClient.patch(`/documents/${serverId}`, { tags }, item.id);
+    await this.docRepo.updateSyncStatus(clientId, 'synced');
+  }
+
+  private async syncFolderStyle(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {
+    const clientId = payload['clientId'] as string;
+    const serverId = this.requireServerId(clientId, 'folder');
+    await apiClient.patch(
+      `/folders/${serverId}`,
+      { color: payload['color'] ?? null, icon: payload['icon'] ?? null },
+      item.id
+    );
+    await this.folderRepo.updateSyncStatus(clientId, 'synced');
   }
 
   private async syncDocumentDelete(item: SyncQueueItem, payload: Record<string, unknown>): Promise<void> {

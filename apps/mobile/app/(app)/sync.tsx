@@ -17,6 +17,9 @@ const OPERATION_LABEL: Record<SyncOperation, string> = {
   'folder:delete':   'Delete folder',
   'document:create': 'Upload document',
   'document:delete': 'Delete document',
+  'favorite:update': 'Update favorite',
+  'tag:update':      'Update tags',
+  'folder:style':    'Change folder look',
 };
 
 const STATUS: Record<SyncStatus, { label: string; className: string }> = {

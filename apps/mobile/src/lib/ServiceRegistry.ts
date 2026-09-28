@@ -4,6 +4,10 @@ import { WorkspaceService } from '../features/workspace/WorkspaceService';
 import { DocumentService } from '../features/documents/DocumentService';
 import { SyncQueueRepository } from '../features/sync/SyncQueueRepository';
 import { SyncEngine } from './SyncEngine';
+import { OrganizationService } from '../features/favorites/OrganizationService';
+import { SearchService } from '../features/search/SearchService';
+import { RecentRepository } from '../features/recent/RecentRepository';
+import { PreferencesRepository } from '../features/settings/PreferencesRepository';
 import { apiClient } from '../api/client';
 
 export interface Services {
@@ -12,6 +16,10 @@ export interface Services {
   documents: DocumentService;
   syncQueue: SyncQueueRepository;
   syncEngine: SyncEngine;
+  organization: OrganizationService;
+  search: SearchService;
+  recent: RecentRepository;
+  preferences: PreferencesRepository;
 }
 
 let _services: Services | null = null;
@@ -28,10 +36,14 @@ function _build(db: SQLiteDatabase): Services {
   const documents  = new DocumentService(db);
   const syncQueue  = new SyncQueueRepository(db);
   const syncEngine = new SyncEngine(db);
+  const organization = new OrganizationService(db);
+  const search      = new SearchService(db);
+  const recent      = new RecentRepository(db);
+  const preferences = new PreferencesRepository(db);
 
   apiClient.setAuthService(auth);
 
-  _services = { auth, workspace, documents, syncQueue, syncEngine };
+  _services = { auth, workspace, documents, syncQueue, syncEngine, organization, search, recent, preferences };
   return _services;
 }
 

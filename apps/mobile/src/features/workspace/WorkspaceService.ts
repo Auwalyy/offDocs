@@ -56,6 +56,9 @@ export class WorkspaceService {
       parentId,
       name: validateName(name),
       pathCache: null,
+      color: null,
+      icon: null,
+      isFavorite: false,
       syncStatus: 'pending',
       createdAt: now,
       updatedAt: now,
@@ -135,6 +138,8 @@ export class WorkspaceService {
       for (const f of subtree) await this.folderRepo.softDelete(f.id, now);
       for (const d of docs) await this.docRepo.softDelete(d.id, now);
       await this.queueRepo.deleteUnsyncedForEntities(neverSynced);
+      // Favorite/tag/style updates for deleted items would only fail on the server.
+      await this.queueRepo.deleteMetadataUpdatesFor([...subtree.map((f) => f.id), ...docs.map((d) => d.id)]);
       for (const op of deleteOps) await this.queueRepo.insert(op);
     });
 
