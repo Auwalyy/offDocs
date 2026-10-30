@@ -5,23 +5,23 @@
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
     "babel-preset-expo": "~57.0.0",
-    "expo": "~57.0.25",
+    "expo": "~57.0.31",
     "expo-build-properties": "~57.0.22",
     "expo-constants": "~57.0.18",
-    "expo-document-picker": "~57.0.2",
+    "expo-document-picker": "~57.0.3",
     "expo-file-system": "~57.0.7",
     "expo-font": "~57.0.4",
-    "expo-linking": "~57.0.11",
-    "expo-network": "~57.0.2",
-    "expo-router": "~57.0.23",
+    "expo-linking": "~57.0.13",
+    "expo-network": "~57.0.3",
+    "expo-router": "~57.0.29",
     "expo-secure-store": "~57.0.4",
-    "expo-sharing": "~57.0.22",
-    "expo-splash-screen": "~57.0.9",
-    "expo-sqlite": "~57.0.3",
+    "expo-sharing": "~57.0.24",
+    "expo-splash-screen": "~57.0.10",
+    "expo-sqlite": "~57.0.4",
     "expo-status-bar": "~57.0.1",
     "nativewind": "^4.2.6",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
@@ -31,8 +31,6 @@
     "tailwindcss": "3.4.19"
   },
   "devDependencies": {
-    "@testing-library/jest-native": "^5.4.3",
-    "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29.5.14",
     "@types/react": "~19.2.2",
     "@types/react-native-uuid": "^1.4.0",
@@ -43,7 +41,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "jest": "^29.7.0",
-    "jest-expo": "^57.0.5",
+    "jest-expo": "~57.0.6",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -60,14 +58,6 @@
     "transformIgnorePatterns": [
       "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|nativewind|react-native-reanimated|react-native-worklets|react-native-uuid)"
     ]
-  },
-  "expo": {
-    "install": {
-      "exclude": [
-        "react",
-        "react-dom"
-      ]
-    }
   },
   "private": true
 }

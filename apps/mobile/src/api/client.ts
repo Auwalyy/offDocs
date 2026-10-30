@@ -2,7 +2,9 @@ import { AuthService } from '../features/auth/AuthService';
 
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api/v1';
 
-const REQUEST_TIMEOUT_MS = 20_000;
+// A hosted backend that sleeps when idle (e.g. Render's free tier) can take
+// 30+ seconds to answer its first request, so allow for a cold start.
+const REQUEST_TIMEOUT_MS = 60_000;
 
 export interface ApiResponse<T> {
   data: T;
@@ -123,7 +125,7 @@ class ApiClient {
       const aborted = err instanceof Error && err.name === 'AbortError';
       throw new ApiError(
         aborted
-          ? 'The server took too long to respond.'
+          ? 'The server took too long to respond. It may be starting up — please try again in a moment.'
           : `Cannot reach the server at ${API_BASE_URL}. Check that the backend is running and the phone is on the same network.`,
         0,
         aborted ? 'TIMEOUT' : 'NETWORK_ERROR'

@@ -16,6 +16,9 @@
     "production": {
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://offdocs.onrender.com/api/v1"
       }
     }
   }
